@@ -4,6 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import App from './App'
 import { SignupPage } from './pages/SignupPage'
+import { PayPage } from './pages/PayPage'
 import { AuthProvider } from './contexts/AuthContext'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { supabase } from './lib/supabase'
@@ -161,7 +162,7 @@ describe('NursingPrep Application Tests', () => {
     fromMock.mockReturnValue({
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: { level: 200 }, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { level: 200, is_active: true }, error: null }),
       update: vi.fn().mockReturnThis(),
     } as unknown as ReturnType<typeof supabase.from>)
 
@@ -170,10 +171,11 @@ describe('NursingPrep Application Tests', () => {
         <AuthProvider>
           <Routes>
             <Route path="/onboarding" element={<div>Onboarding Page Target</div>} />
+            <Route path="/pay" element={<div>Pay Page Target</div>} />
             <Route
               path="/app"
               element={
-                <ProtectedRoute requireLevel>
+                <ProtectedRoute requireLevel requireActive>
                   <div>Dashboard Target</div>
                 </ProtectedRoute>
               }
@@ -187,6 +189,7 @@ describe('NursingPrep Application Tests', () => {
       expect(screen.getByText('Dashboard Target')).toBeDefined()
     })
     expect(screen.queryByText('Onboarding Page Target')).toBeNull()
+    expect(screen.queryByText('Pay Page Target')).toBeNull()
   })
 
   it('blocks onboarding and redirects to /app if level is already set', async () => {
@@ -203,7 +206,7 @@ describe('NursingPrep Application Tests', () => {
     fromMock.mockReturnValue({
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: { level: 300 }, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { level: 300, is_active: true }, error: null }),
       update: vi.fn().mockReturnThis(),
     } as unknown as ReturnType<typeof supabase.from>)
 
@@ -219,7 +222,14 @@ describe('NursingPrep Application Tests', () => {
                 </ProtectedRoute>
               }
             />
-            <Route path="/app" element={<div>Dashboard Target</div>} />
+            <Route
+              path="/app"
+              element={
+                <ProtectedRoute requireLevel requireActive>
+                  <div>Dashboard Target</div>
+                </ProtectedRoute>
+              }
+            />
           </Routes>
         </AuthProvider>
       </MemoryRouter>
@@ -229,6 +239,98 @@ describe('NursingPrep Application Tests', () => {
       expect(screen.getByText('Dashboard Target')).toBeDefined()
     })
     expect(screen.queryByText('Onboarding Page Content')).toBeNull()
+  })
+
+  it('redirects to /pay when signed in with level set but is_active is false', async () => {
+    const mockSession = {
+      user: { id: 'test-user-id', email: 'test@example.com' },
+    } as unknown as Session
+
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: mockSession },
+      error: null,
+    })
+
+    const fromMock = vi.mocked(supabase.from)
+    fromMock.mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { level: 200, is_active: false }, error: null }),
+      update: vi.fn().mockReturnThis(),
+    } as unknown as ReturnType<typeof supabase.from>)
+
+    render(
+      <MemoryRouter initialEntries={['/app']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/onboarding" element={<div>Onboarding Page Target</div>} />
+            <Route path="/pay" element={<div>Pay Page Target</div>} />
+            <Route
+              path="/app"
+              element={
+                <ProtectedRoute requireLevel requireActive>
+                  <div>Dashboard Target</div>
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Pay Page Target')).toBeDefined()
+    })
+    expect(screen.queryByText('Dashboard Target')).toBeNull()
+  })
+
+  it('allows active user to access /app and bounces /pay to /app', async () => {
+    const mockSession = {
+      user: { id: 'test-user-id', email: 'test@example.com' },
+    } as unknown as Session
+
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: mockSession },
+      error: null,
+    })
+
+    const fromMock = vi.mocked(supabase.from)
+    fromMock.mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { level: 200, is_active: true }, error: null }),
+      update: vi.fn().mockReturnThis(),
+    } as unknown as ReturnType<typeof supabase.from>)
+
+    render(
+      <MemoryRouter initialEntries={['/pay']}>
+        <AuthProvider>
+          <Routes>
+            <Route
+              path="/pay"
+              element={
+                <ProtectedRoute requireLevel blockIfActive>
+                  <div>Pay Page Content</div>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/app"
+              element={
+                <ProtectedRoute requireLevel requireActive>
+                  <div>Dashboard Target</div>
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard Target')).toBeDefined()
+    })
+    expect(screen.queryByText('Pay Page Content')).toBeNull()
   })
 
   it('signup form validates minimum 8 character password before submission', async () => {
@@ -251,5 +353,40 @@ describe('NursingPrep Application Tests', () => {
 
     expect(supabase.auth.signUp).not.toHaveBeenCalled()
     expect(screen.getByText('Password must be at least 8 characters')).toBeDefined()
+  })
+
+  it('renders /pay page with Payment required, disabled Coming soon button, and sign out', async () => {
+    const mockSession = {
+      user: { id: 'test-user-id', email: 'test@example.com' },
+    } as unknown as Session
+
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: mockSession },
+      error: null,
+    })
+
+    const fromMock = vi.mocked(supabase.from)
+    fromMock.mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { level: 200, is_active: false }, error: null }),
+      update: vi.fn().mockReturnThis(),
+    } as unknown as ReturnType<typeof supabase.from>)
+
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <PayPage />
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Payment required')).toBeDefined()
+    })
+    const payBtn = screen.getByRole('button', { name: /coming soon|pay now/i })
+    expect(payBtn).toBeDefined()
+    expect(payBtn.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeDefined()
   })
 })

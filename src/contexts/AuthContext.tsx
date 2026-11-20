@@ -6,6 +6,7 @@ export interface AuthContextType {
   user: User | null
   loading: boolean
   level: number | null
+  isActive: boolean
   refreshProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -14,6 +15,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   loading: true,
   level: null,
+  isActive: false,
   refreshProfile: async () => {},
   signOut: async () => {},
 })
@@ -21,22 +23,26 @@ const AuthContext = createContext<AuthContextType>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [level, setLevel] = useState<number | null>(null)
+  const [isActive, setIsActive] = useState<boolean>(false)
   const [loading, setLoading] = useState(true)
 
   const fetchProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('level')
+        .select('level, is_active')
         .eq('id', userId)
         .maybeSingle()
       if (!error && data) {
         setLevel(data.level ?? null)
+        setIsActive(Boolean(data.is_active))
       } else {
         setLevel(null)
+        setIsActive(false)
       }
     } catch {
       setLevel(null)
+      setIsActive(false)
     }
   }
 
@@ -51,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await fetchProfile(currentUser.id)
       } else {
         setLevel(null)
+        setIsActive(false)
       }
       if (mounted) setLoading(false)
     }).catch(() => {
@@ -66,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await fetchProfile(currentUser.id)
       } else {
         setLevel(null)
+        setIsActive(false)
       }
       if (mounted) setLoading(false)
     })
@@ -86,10 +94,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut()
     setUser(null)
     setLevel(null)
+    setIsActive(false)
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, level, refreshProfile, signOut }}>
+    <AuthContext.Provider value={{ user, loading, level, isActive, refreshProfile, signOut }}>
       {children}
     </AuthContext.Provider>
   )
