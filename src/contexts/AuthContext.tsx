@@ -43,32 +43,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!mounted) return
       const currentUser = session?.user ?? null
       setUser(currentUser)
       if (currentUser) {
-        fetchProfile(currentUser.id).finally(() => {
-          if (mounted) setLoading(false)
-        })
+        await fetchProfile(currentUser.id)
       } else {
         setLevel(null)
-        setLoading(false)
       }
+      if (mounted) setLoading(false)
     }).catch(() => {
       if (mounted) setLoading(false)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!mounted) return
       const currentUser = session?.user ?? null
       setUser(currentUser)
       if (currentUser) {
-        fetchProfile(currentUser.id)
+        setLoading(true)
+        await fetchProfile(currentUser.id)
       } else {
         setLevel(null)
       }
-      setLoading(false)
+      if (mounted) setLoading(false)
     })
 
     return () => {

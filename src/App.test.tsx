@@ -147,6 +147,90 @@ describe('NursingPrep Application Tests', () => {
     })
   })
 
+  it('returning user with level set goes to /app, not onboarding', async () => {
+    const mockSession = {
+      user: { id: 'test-user-id', email: 'test@example.com' },
+    } as unknown as Session
+
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: mockSession },
+      error: null,
+    })
+
+    const fromMock = vi.mocked(supabase.from)
+    fromMock.mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { level: 200 }, error: null }),
+      update: vi.fn().mockReturnThis(),
+    } as unknown as ReturnType<typeof supabase.from>)
+
+    render(
+      <MemoryRouter initialEntries={['/app']}>
+        <AuthProvider>
+          <Routes>
+            <Route path="/onboarding" element={<div>Onboarding Page Target</div>} />
+            <Route
+              path="/app"
+              element={
+                <ProtectedRoute requireLevel>
+                  <div>Dashboard Target</div>
+                </ProtectedRoute>
+              }
+            />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard Target')).toBeDefined()
+    })
+    expect(screen.queryByText('Onboarding Page Target')).toBeNull()
+  })
+
+  it('blocks onboarding and redirects to /app if level is already set', async () => {
+    const mockSession = {
+      user: { id: 'test-user-id', email: 'test@example.com' },
+    } as unknown as Session
+
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: mockSession },
+      error: null,
+    })
+
+    const fromMock = vi.mocked(supabase.from)
+    fromMock.mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { level: 300 }, error: null }),
+      update: vi.fn().mockReturnThis(),
+    } as unknown as ReturnType<typeof supabase.from>)
+
+    render(
+      <MemoryRouter initialEntries={['/onboarding']}>
+        <AuthProvider>
+          <Routes>
+            <Route
+              path="/onboarding"
+              element={
+                <ProtectedRoute blockIfOnboarded>
+                  <div>Onboarding Page Content</div>
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/app" element={<div>Dashboard Target</div>} />
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard Target')).toBeDefined()
+    })
+    expect(screen.queryByText('Onboarding Page Content')).toBeNull()
+  })
+
   it('signup form validates minimum 8 character password before submission', async () => {
     render(
       <MemoryRouter>

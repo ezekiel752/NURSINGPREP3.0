@@ -5,9 +5,14 @@ import { useAuth } from '../contexts/AuthContext'
 interface ProtectedRouteProps {
   children: ReactNode
   requireLevel?: boolean
+  blockIfOnboarded?: boolean
 }
 
-export function ProtectedRoute({ children, requireLevel = false }: ProtectedRouteProps) {
+export function ProtectedRoute({
+  children,
+  requireLevel = false,
+  blockIfOnboarded = false,
+}: ProtectedRouteProps) {
   const { user, loading, level } = useAuth()
 
   if (loading) {
@@ -24,6 +29,10 @@ export function ProtectedRoute({ children, requireLevel = false }: ProtectedRout
 
   if (requireLevel && level === null) {
     return <Navigate to="/onboarding" replace />
+  }
+
+  if (blockIfOnboarded && level !== null) {
+    return <Navigate to="/app" replace />
   }
 
   return <>{children}</>

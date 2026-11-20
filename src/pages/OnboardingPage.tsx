@@ -1,14 +1,26 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 
 export function OnboardingPage() {
   const navigate = useNavigate()
-  const { user, refreshProfile } = useAuth()
+  const { user, loading: authLoading, level: userLevel, refreshProfile } = useAuth()
   const [level, setLevel] = useState('200')
   const [loading, setLoading] = useState(false)
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-bg text-text flex items-center justify-center">
+        <p className="text-muted">Loading...</p>
+      </div>
+    )
+  }
+
+  if (userLevel !== null) {
+    return <Navigate to="/app" replace />
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
