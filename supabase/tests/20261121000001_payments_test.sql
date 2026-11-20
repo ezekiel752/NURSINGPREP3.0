@@ -1,70 +1,3 @@
--- Security test script for payments schema
--- Executed inside a rolled-back transaction
-begin;
-
--- 1. Apply schema changes temporarily in transaction
-create table public.payments (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  reference text unique not null,
-  amount_minor integer not null,
-  currency text not null default 'NGN',
-  status text not null default 'pending' check (status in ('pending', 'success', 'failed', 'duplicate')),
-  created_at timestamptz default now(),
-  verified_at timestamptz
-);
-
-alter table public.payments enable row level security;
-revoke all on public.payments from anon, authenticated;
-grant select on public.payments to authenticated;
-
-create policy "Users can select own payments"
-  on public.payments
-  for select
-  to authenticated
-  using (user_id = (select auth.uid()));
-
-create or replace function public.activate_payment(p_reference text)
-returns boolean
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_user_id uuid;
-  v_status text;
-begin
-  select user_id, status
-  into v_user_id, v_status
-  from public.payments
-  where reference = p_reference
-  for update;
-
-  if not found then
-    return false;
-  end if;
-
-  if v_status = 'success' then
-    return false;
-  end if;
-
-  update public.payments
-  set status = 'success',
-      verified_at = now()
-  where reference = p_reference;
-
-  update public.profiles
-  set is_active = true
-  where id = v_user_id;
-
-  return true;
-end;
-$$;
-
-revoke all on function public.activate_payment(text) from public, anon, authenticated;
-grant execute on function public.activate_payment(text) to service_role;
-
--- 2. Execute security tests
 do $$
 declare
   v_student1_id uuid := '11111111-1111-1111-1111-111111111111';
@@ -142,7 +75,7 @@ begin
     raise exception 'FAIL: student was able to execute activate_payment';
   end if;
 
-  -- Switch to service_role for activation
+  -- Switch to service_role for activation (Edge Function simulation)
   reset role;
   set local role service_role;
 
@@ -158,10 +91,7 @@ begin
     raise exception 'FAIL: second activate_payment returned true instead of false';
   end if;
 
-  -- Reset role to postgres to verify profiles.is_active
-  reset role;
-
-  -- CHECK 7: is_active ends true on profiles
+  -- CHECK 7: is_active ends true on profiles (queried as service_role)
   select is_active into v_is_active from public.profiles where id = v_student1_id;
   if v_is_active is not true then
     raise exception 'FAIL: profiles.is_active is not true after activation';
@@ -170,5 +100,3 @@ begin
   raise notice 'ALL 7 PAYMENT SECURITY CHECKS PASSED';
 end;
 $$;
-
-rollback;
