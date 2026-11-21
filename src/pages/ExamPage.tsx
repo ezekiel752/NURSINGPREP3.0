@@ -25,6 +25,7 @@ export interface ExamSubmissionResponse {
   score: number
   total: number
   results: ExamResultItem[]
+  late?: boolean
 }
 
 type ExamPhase = 'start' | 'in_progress' | 'results'
@@ -92,6 +93,14 @@ export function ExamPage() {
   const [timeLeft, setTimeLeft] = useState(TOTAL_TIME_SECONDS)
   const [resultsData, setResultsData] = useState<ExamSubmissionResponse | null>(null)
 
+  // Timer deadline ref and state
+  const deadlineRef = useRef<number | null>(null)
+  const [deadline, setDeadline] = useState<number | null>(null)
+  const answersRef = useRef(answers)
+  useEffect(() => {
+    answersRef.current = answers
+  }, [answers])
+
   // Guard against double submit
   const hasSubmittedRef = useRef(false)
 
@@ -146,6 +155,8 @@ export function ExamPage() {
 
     const fallbackToStart = (errorMsg: string) => {
       clearStoredExam()
+      deadlineRef.current = null
+      setDeadline(null)
       setAttemptId(null)
       setQuestions([])
       setAnswers({})
@@ -181,6 +192,10 @@ export function ExamPage() {
           fallbackToStart('No questions found for this exam attempt.')
           return
         }
+
+        const targetDeadline = Date.now() + secondsRemaining * 1000
+        deadlineRef.current = targetDeadline
+        setDeadline(targetDeadline)
 
         setAttemptId(savedAttemptId)
         setQuestions(returnedQuestions)
@@ -230,6 +245,10 @@ export function ExamPage() {
         return
       }
 
+      const targetDeadline = Date.now() + TOTAL_TIME_SECONDS * 1000
+      deadlineRef.current = targetDeadline
+      setDeadline(targetDeadline)
+
       setStoredAttemptId(returnedAttemptId)
       setStoredAnswers({})
 
@@ -250,24 +269,34 @@ export function ExamPage() {
 
   // Timer countdown and auto-submit
   useEffect(() => {
-    if (phase !== 'in_progress') return
+    if (phase !== 'in_progress' || !deadline) return
 
-    const interval = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval)
-          // Timer reached 0: auto-submit once
-          if (!hasSubmittedRef.current) {
-            submitExam(answers)
-          }
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
+    const updateTimer = () => {
+      const remainingMs = Math.max(0, deadline - Date.now())
+      const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000))
+      setTimeLeft(remainingSec)
 
-    return () => clearInterval(interval)
-  }, [phase, answers, submitExam])
+      if (remainingMs <= 0 && !hasSubmittedRef.current) {
+        void submitExamRef.current(answersRef.current)
+      }
+    }
+
+    updateTimer()
+    const interval = setInterval(updateTimer, 1000)
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        updateTimer()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [phase, deadline])
 
   const handleSelectOption = (questionId: string, optionKey: string) => {
     setAnswers((prev) => {
@@ -318,6 +347,8 @@ export function ExamPage() {
   // Reset to retake
   const handleRetake = () => {
     clearStoredExam()
+    deadlineRef.current = null
+    setDeadline(null)
     setAttemptId(null)
     setQuestions([])
     setCurrentIndex(0)
@@ -419,8 +450,15 @@ export function ExamPage() {
               <span className="text-xs uppercase font-extrabold tracking-widest text-accent">
                 Performance Overview
               </span>
-              <div className="text-4xl font-extrabold tracking-tight">
-                {score} / {total}
+              <div className="flex items-center gap-3 justify-center sm:justify-start">
+                <div className="text-4xl font-extrabold tracking-tight">
+                  {score} / {total}
+                </div>
+                {resultsData.late && (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-border text-muted">
+                    Submitted after time limit
+                  </span>
+                )}
               </div>
               <p className="text-sm text-muted">
                 {percentage >= 70

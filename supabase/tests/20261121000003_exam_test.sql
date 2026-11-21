@@ -279,6 +279,42 @@ begin
     end if;
   end loop;
 
-  raise notice 'ALL 9 EXAM FUNCTION CHECKS PASSED';
+  ----------------------------------------------------------------------
+  -- CHECK 10: Late flag check (on-time late=false, backdated > 21 min late=true)
+  ----------------------------------------------------------------------
+  -- Verify the on-time submission from check 4 had late = false
+  if (v_submit_res ->> 'late')::boolean is not false then
+    raise exception 'FAIL: on-time submit expected late=false but got %', (v_submit_res ->> 'late');
+  end if;
+
+  -- Create an attempt with created_at backdated beyond 21 minutes
+  reset role;
+  insert into public.exam_attempts (id, user_id, question_ids, total, created_at)
+  values (
+    '66666666-6666-6666-6666-666666666666',
+    v_student1_id,
+    array[v_q1_id, v_q2_id],
+    2,
+    now() - interval '22 minutes'
+  )
+  on conflict (id) do nothing;
+
+  set local role authenticated;
+  set local "request.jwt.claims" = '{"sub": "33333333-3333-3333-3333-333333333333", "role": "authenticated"}';
+
+  v_submit_res := public.submit_exam(
+    '66666666-6666-6666-6666-666666666666',
+    jsonb_build_object(v_q1_id::text, 'a')
+  );
+
+  if (v_submit_res ->> 'late')::boolean is not true then
+    raise exception 'FAIL: backdated attempt (>21 min) expected late=true but got %', (v_submit_res ->> 'late');
+  end if;
+
+  if (v_submit_res ->> 'score')::int <> 1 then
+    raise exception 'FAIL: backdated attempt was not properly graded, expected score 1 but got %', (v_submit_res ->> 'score');
+  end if;
+
+  raise notice 'ALL 10 EXAM FUNCTION CHECKS PASSED';
 end;
 $$;

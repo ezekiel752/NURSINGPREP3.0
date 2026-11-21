@@ -393,4 +393,144 @@ describe('ExamPage component', () => {
     expect(mockRpc.mock.calls.filter((c: unknown[]) => c[0] === 'submit_exam').length).toBe(1)
     expect(sessionStorage.getItem('nursingprep_exam_attempt_id')).toBeNull()
   })
+
+  it('clicking options 50 times over simulated time does not stall or reset the countdown', async () => {
+    vi.useFakeTimers()
+
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'get_exam_questions') {
+        return {
+          data: {
+            attempt_id: 'attempt-stall-test',
+            questions: mockQuestions,
+          },
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /start exam/i }))
+    })
+
+    expect(screen.getByText('20:00')).toBeDefined()
+
+    const optA = screen.getByRole('button', { name: /Option A:/i })
+    const optB = screen.getByRole('button', { name: /Option B:/i })
+
+    // Click 50 times with 100ms between clicks (50 * 100ms = 5000ms = 5 seconds)
+    for (let i = 0; i < 50; i++) {
+      await act(async () => {
+        fireEvent.click(i % 2 === 0 ? optA : optB)
+        vi.advanceTimersByTime(100)
+      })
+    }
+
+    // In 5 seconds, timer should have ticked down from 20:00 to 19:55
+    expect(screen.getByText('19:55')).toBeDefined()
+  })
+
+  it('switching tabs (visibilitychange) immediately corrects the display', async () => {
+    vi.useFakeTimers()
+
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'get_exam_questions') {
+        return {
+          data: {
+            attempt_id: 'attempt-visibility-test',
+            questions: mockQuestions,
+          },
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /start exam/i }))
+    })
+
+    expect(screen.getByText('20:00')).toBeDefined()
+
+    // Simulate tab in background: system clock moves forward by 65 seconds
+    await act(async () => {
+      vi.advanceTimersByTime(65000)
+    })
+
+    // Simulate returning to tab: visibilitychange event
+    await act(async () => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        value: 'visible',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+
+    // 1200 - 65 = 1135s -> 18:55
+    expect(screen.getByText('18:55')).toBeDefined()
+  })
+
+  it('displays "Submitted after time limit" on results when late flag is true', async () => {
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'get_exam_questions') {
+        return {
+          data: {
+            attempt_id: 'late-attempt',
+            questions: mockQuestions,
+          },
+          error: null,
+        }
+      }
+      if (fnName === 'submit_exam') {
+        return {
+          data: {
+            score: 1,
+            total: 2,
+            late: true,
+            results: [
+              {
+                id: 'q-1',
+                chosen: 'A',
+                correct_answer: 'A',
+                explanation: 'Explanation',
+              },
+            ],
+          },
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /start exam/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Question 1 of 2/i)).toBeDefined()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /^Submit exam$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Confirm submit/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Submitted after time limit/i)).toBeDefined()
+    })
+  })
 })

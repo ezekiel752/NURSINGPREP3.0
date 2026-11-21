@@ -6,9 +6,9 @@ const migrationsDir = path.resolve('supabase/migrations');
 const testPath = path.resolve('supabase/tests/20261121000003_exam_test.sql');
 const tempPath = path.resolve('supabase/tests/.temp_exam_test.sql');
 
-// Concatenate all migrations from 20261121000004 onward in filename order
+// Concatenate all migrations from 20261121000005 onward in filename order
 const migrationFiles = fs.readdirSync(migrationsDir)
-  .filter((file) => file >= '20261121000004' && file.endsWith('.sql'))
+  .filter((file) => file >= '20261121000005' && file.endsWith('.sql'))
   .sort();
 
 let combinedMigrations = '';
@@ -19,7 +19,7 @@ for (const file of migrationFiles) {
 
 const testSql = fs.readFileSync(testPath, 'utf8');
 
-const combinedSql = `begin;\n\n-- Migrations (from 20261121000004 onward)\n${combinedMigrations}\n-- Exam Test Body\n${testSql}\n\nrollback;\n`;
+const combinedSql = `begin;\n\n-- Migrations (from 20261121000005 onward)\n${combinedMigrations}\n-- Exam Test Body\n${testSql}\n\nrollback;\n`;
 
 fs.writeFileSync(tempPath, combinedSql, 'utf8');
 
@@ -29,6 +29,16 @@ try {
     stdio: 'pipe',
   });
   console.log(output);
+
+  // Residue check after rolled-back transaction
+  const residueOutput = execSync(
+    `npx supabase db query --remote --yes "select (select count(*) from auth.users where id in ('33333333-3333-3333-3333-333333333333', '44444444-4444-4444-4444-444444444444')) as users_residue, (select count(*) from public.exam_attempts where id in ('55555555-5555-5555-5555-555555555555', '66666666-6666-6666-6666-666666666666')) as attempts_residue;"`,
+    {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    }
+  );
+  console.log('RESIDUE CHECK:', residueOutput);
 } catch (error) {
   if (error.stdout) console.log(error.stdout.toString());
   if (error.stderr) console.error(error.stderr.toString());
