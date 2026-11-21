@@ -3,38 +3,50 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 
 const migrationsDir = path.resolve('supabase/migrations');
-const testPath = path.resolve('supabase/tests/20261121000001_payments_test.sql');
-const tempPath = path.resolve('supabase/tests/.temp_payments_test.sql');
+const target = process.argv[2] || 'exam';
 
-// Concatenate all migrations from 20261121000001 onward in filename order
-const migrationFiles = fs.readdirSync(migrationsDir)
-  .filter((file) => file >= '20261121000001' && file.endsWith('.sql'))
-  .sort();
+function runTest(testFileName, minMigration) {
+  const testPath = path.resolve('supabase/tests', testFileName);
+  const tempPath = path.resolve('supabase/tests', `.temp_${testFileName}`);
 
-let combinedMigrations = '';
-for (const file of migrationFiles) {
-  const content = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
-  combinedMigrations += `-- Migration: ${file}\n${content}\n\n`;
+  const migrationFiles = fs.readdirSync(migrationsDir)
+    .filter((file) => file >= minMigration && file.endsWith('.sql'))
+    .sort();
+
+  let combinedMigrations = '';
+  for (const file of migrationFiles) {
+    const content = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+    combinedMigrations += `-- Migration: ${file}\n${content}\n\n`;
+  }
+
+  const testSql = fs.readFileSync(testPath, 'utf8');
+  const combinedSql = `begin;\n\n-- Migrations (from ${minMigration} onward)\n${combinedMigrations}\n-- Test Body\n${testSql}\n\nrollback;\n`;
+
+  fs.writeFileSync(tempPath, combinedSql, 'utf8');
+
+  try {
+    const output = execSync(`npx supabase db query --remote --yes -f "${tempPath}"`, {
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+    console.log(`[PASS] ${testFileName}`);
+    console.log(output);
+  } catch (error) {
+    console.error(`[FAIL] ${testFileName}`);
+    if (error.stdout) console.log(error.stdout.toString());
+    if (error.stderr) console.error(error.stderr.toString());
+    throw error;
+  } finally {
+    if (fs.existsSync(tempPath)) {
+      fs.unlinkSync(tempPath);
+    }
+  }
 }
 
-const testSql = fs.readFileSync(testPath, 'utf8');
-
-const combinedSql = `begin;\n\n-- Migrations (from 20261121000001 onward)\n${combinedMigrations}\n-- Security Test Body\n${testSql}\n\nrollback;\n`;
-
-fs.writeFileSync(tempPath, combinedSql, 'utf8');
-
-try {
-  const output = execSync(`npx supabase db query --remote --yes -f "${tempPath}"`, {
-    encoding: 'utf8',
-    stdio: 'pipe',
-  });
-  console.log(output);
-} catch (error) {
-  if (error.stdout) console.log(error.stdout.toString());
-  if (error.stderr) console.error(error.stderr.toString());
-  throw error;
-} finally {
-  if (fs.existsSync(tempPath)) {
-    fs.unlinkSync(tempPath);
-  }
+if (target === 'exam') {
+  runTest('20261121000003_exam_test.sql', '20261121000003');
+} else if (target === 'payments') {
+  runTest('20261121000001_payments_test.sql', '20261121000003');
+} else {
+  runTest('20261121000003_exam_test.sql', '20261121000003');
 }
