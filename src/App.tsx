@@ -8,6 +8,7 @@ import { SignupPage } from './pages/SignupPage'
 import { OnboardingPage } from './pages/OnboardingPage'
 import { PayPage } from './pages/PayPage'
 import { DashboardPage } from './pages/DashboardPage'
+import { ExamPage } from './pages/ExamPage'
 
 export default function App() {
   return (
@@ -39,6 +40,14 @@ export default function App() {
             element={
               <ProtectedRoute requireLevel requireActive>
                 <DashboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/app/exam"
+            element={
+              <ProtectedRoute requireLevel requireActive>
+                <ExamPage />
               </ProtectedRoute>
             }
           />

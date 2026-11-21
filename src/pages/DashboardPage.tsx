@@ -38,10 +38,21 @@ export function DashboardPage() {
           </p>
         </div>
 
-        <div className="border border-border bg-surface p-6 rounded-2xl">
-          <p className="text-sm text-muted">
-            Exam practice modules and questions will appear here.
-          </p>
+        <div className="border border-border bg-surface p-6 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h2 className="text-lg font-bold">Standard Practice Exam</h2>
+            <p className="text-sm text-muted">
+              Practice 20 timed questions tailored to your academic level.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/app/exam')}
+            aria-label="Start exam"
+            className="bg-primary text-on-primary hover:opacity-90 px-5 py-2.5 text-sm font-semibold rounded-xl motion-safe:transition-transform motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            Start exam
+          </button>
         </div>
       </main>
     </div>
