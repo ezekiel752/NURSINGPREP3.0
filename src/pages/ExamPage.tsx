@@ -94,7 +94,6 @@ export function ExamPage() {
 
   // Guard against double submit
   const hasSubmittedRef = useRef(false)
-  const hasCheckedResumeRef = useRef(false)
 
   // Submit exam callback
   const submitExam = useCallback(async (currentAnswers: Record<string, string>, targetAttemptId?: string) => {
@@ -130,59 +129,86 @@ export function ExamPage() {
     }
   }, [attemptId])
 
+  const submitExamRef = useRef(submitExam)
+  useEffect(() => {
+    submitExamRef.current = submitExam
+  }, [submitExam])
+
   // Resume unsubmitted attempt from sessionStorage on mount
   useEffect(() => {
-    if (hasCheckedResumeRef.current) return
-    hasCheckedResumeRef.current = true
-
-    let mounted = true
+    let isCurrent = true
+    let isFinished = false
     const savedAttemptId = getStoredAttemptId()
 
-    if (savedAttemptId) {
-      const resumeAttempt = async () => {
-        try {
-          const { data, error } = await supabase.rpc('resume_exam', { p_attempt_id: savedAttemptId })
-          if (!mounted) return
-          if (error || !data) {
-            clearStoredExam()
-            setIsLoading(false)
-            return
-          }
-
-          const returnedQuestions: ExamQuestion[] = data.questions || []
-          const secondsRemaining: number = typeof data.seconds_remaining === 'number' ? data.seconds_remaining : 0
-          const restoredAnswers = getStoredAnswers()
-
-          if (returnedQuestions.length === 0) {
-            clearStoredExam()
-            setIsLoading(false)
-            return
-          }
-
-          setAttemptId(savedAttemptId)
-          setQuestions(returnedQuestions)
-          setAnswers(restoredAnswers)
-          setTimeLeft(secondsRemaining)
-          setCurrentIndex(0)
-          setPhase('in_progress')
-          setIsLoading(false)
-
-          if (secondsRemaining <= 0 && !hasSubmittedRef.current) {
-            submitExam(restoredAnswers, savedAttemptId)
-          }
-        } catch {
-          if (!mounted) return
-          clearStoredExam()
-          setIsLoading(false)
-        }
-      }
-      void resumeAttempt()
+    if (!savedAttemptId) {
+      return
     }
+
+    const fallbackToStart = (errorMsg: string) => {
+      clearStoredExam()
+      setAttemptId(null)
+      setQuestions([])
+      setAnswers({})
+      setIsLoading(false)
+      setPhase('start')
+      toast.error(errorMsg)
+    }
+
+    // 10-second timeout fallback to prevent hanging
+    const timeoutTimer = setTimeout(() => {
+      if (!isCurrent || isFinished) return
+      isFinished = true
+      fallbackToStart('Resume request timed out. Please start a new attempt.')
+    }, 10000)
+
+    const resumeAttempt = async () => {
+      try {
+        const { data, error } = await supabase.rpc('resume_exam', { p_attempt_id: savedAttemptId })
+        if (!isCurrent || isFinished) return
+        isFinished = true
+        clearTimeout(timeoutTimer)
+
+        if (error || !data) {
+          fallbackToStart(error?.message || 'Failed to resume exam. Please start a new attempt.')
+          return
+        }
+
+        const returnedQuestions: ExamQuestion[] = data.questions || []
+        const secondsRemaining: number = typeof data.seconds_remaining === 'number' ? data.seconds_remaining : 0
+        const restoredAnswers = getStoredAnswers()
+
+        if (returnedQuestions.length === 0) {
+          fallbackToStart('No questions found for this exam attempt.')
+          return
+        }
+
+        setAttemptId(savedAttemptId)
+        setQuestions(returnedQuestions)
+        setAnswers(restoredAnswers)
+        setTimeLeft(secondsRemaining)
+        setCurrentIndex(0)
+        setPhase('in_progress')
+        setIsLoading(false)
+
+        if (secondsRemaining <= 0 && !hasSubmittedRef.current) {
+          void submitExamRef.current(restoredAnswers, savedAttemptId)
+        }
+      } catch (err: unknown) {
+        if (!isCurrent || isFinished) return
+        isFinished = true
+        clearTimeout(timeoutTimer)
+        const msg = err instanceof Error ? err.message : 'Failed to resume exam.'
+        fallbackToStart(msg)
+      }
+    }
+
+    void resumeAttempt()
 
     return () => {
-      mounted = false
+      isCurrent = false
+      clearTimeout(timeoutTimer)
     }
-  }, [submitExam])
+  }, [])
 
   // Start exam
   const handleStartExam = async () => {

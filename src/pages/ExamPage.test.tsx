@@ -292,4 +292,105 @@ describe('ExamPage component', () => {
       expect(screen.getByRole('button', { name: /start exam/i })).toBeDefined()
     })
   })
+
+  it('handles resume_exam rpc error: shows Start screen, clears storage, and shows toast', async () => {
+    sessionStorage.setItem('nursingprep_exam_attempt_id', 'err-attempt')
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'resume_exam') {
+        return { data: null, error: { message: 'Exam attempt not found' } }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Exam attempt not found')
+      expect(screen.getByRole('button', { name: /start exam/i })).toBeDefined()
+    })
+
+    expect(sessionStorage.getItem('nursingprep_exam_attempt_id')).toBeNull()
+  })
+
+  it('handles hanging resume_exam: falls back after 10s timeout, clears storage and shows toast', async () => {
+    vi.useFakeTimers()
+    sessionStorage.setItem('nursingprep_exam_attempt_id', 'hanging-attempt')
+    mockRpc.mockImplementation((fnName: string) => {
+      if (fnName === 'resume_exam') {
+        return new Promise(() => {}) // never resolves
+      }
+      return Promise.resolve({ data: null, error: null })
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    // Advance 10 seconds
+    await act(async () => {
+      vi.advanceTimersByTime(10001)
+    })
+
+    expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/timed out/i))
+    expect(screen.getByRole('button', { name: /start exam/i })).toBeDefined()
+    expect(sessionStorage.getItem('nursingprep_exam_attempt_id')).toBeNull()
+  })
+
+  it('resumes with seconds_remaining 0: auto-submits once without confirm dialog', async () => {
+    sessionStorage.setItem('nursingprep_exam_attempt_id', 'expired-attempt')
+    sessionStorage.setItem('nursingprep_exam_answers', JSON.stringify({ 'q-1': 'A' }))
+
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'resume_exam') {
+        return {
+          data: {
+            attempt_id: 'expired-attempt',
+            questions: mockQuestions,
+            seconds_remaining: 0,
+          },
+          error: null,
+        }
+      }
+      if (fnName === 'submit_exam') {
+        return {
+          data: {
+            score: 1,
+            total: 2,
+            results: [
+              {
+                id: 'q-1',
+                chosen: 'A',
+                correct_answer: 'A',
+                explanation: 'Beta blockers decrease myocardial contractility and heart rate.',
+              },
+            ],
+          },
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(supabase.rpc).toHaveBeenCalledWith('submit_exam', {
+        p_attempt_id: 'expired-attempt',
+        p_answers: { 'q-1': 'A' },
+      })
+    })
+
+    expect(mockRpc.mock.calls.filter((c: unknown[]) => c[0] === 'submit_exam').length).toBe(1)
+    expect(sessionStorage.getItem('nursingprep_exam_attempt_id')).toBeNull()
+  })
 })
