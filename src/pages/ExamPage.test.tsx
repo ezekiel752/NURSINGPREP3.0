@@ -44,14 +44,16 @@ const mockQuestions = [
 describe('ExamPage component', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    sessionStorage.clear()
   })
 
   afterEach(() => {
     cleanup()
+    sessionStorage.clear()
     vi.useRealTimers()
   })
 
-  it('renders start screen with "20 questions, 20 minutes" and does not call get_exam_questions initially', () => {
+  it('renders start screen with "20 questions, 20 minutes" when no stored attempt exists', () => {
     render(
       <MemoryRouter>
         <ExamPage />
@@ -65,7 +67,7 @@ describe('ExamPage component', () => {
     expect(supabase.rpc).not.toHaveBeenCalled()
   })
 
-  it('completes flow: start -> answer questions -> submit calls submit_exam with correct payload and renders results', async () => {
+  it('completes flow: start -> answer questions -> submit calls submit_exam with correct payload, renders results, clears sessionStorage', async () => {
     mockRpc.mockImplementation(async (fnName: string) => {
       if (fnName === 'get_exam_questions') {
         return {
@@ -116,9 +118,16 @@ describe('ExamPage component', () => {
       expect(screen.getByText(/Question 1 of 2/i)).toBeDefined()
     })
 
+    // Verify sessionStorage has attempt id
+    expect(sessionStorage.getItem('nursingprep_exam_attempt_id')).toBe('attempt-uuid-1234')
+
     // Question 1: select Option A
     const optA = screen.getByRole('button', { name: /Option A:/i })
     fireEvent.click(optA)
+
+    // Verify answers stored in sessionStorage
+    const storedAnswers = JSON.parse(sessionStorage.getItem('nursingprep_exam_answers') || '{}')
+    expect(storedAnswers['q-1']).toBe('A')
 
     // Navigate to Question 2
     fireEvent.click(screen.getByRole('button', { name: /Next question/i }))
@@ -154,6 +163,44 @@ describe('ExamPage component', () => {
       expect(screen.getByText(/^Correct$/)).toBeDefined()
       expect(screen.getByText(/^Incorrect$/)).toBeDefined()
       expect(screen.getByText(/Beta blockers decrease myocardial/i)).toBeDefined()
+    })
+
+    // Verify sessionStorage was cleared on submit
+    expect(sessionStorage.getItem('nursingprep_exam_attempt_id')).toBeNull()
+    expect(sessionStorage.getItem('nursingprep_exam_answers')).toBeNull()
+  })
+
+  it('resumes unsubmitted attempt from sessionStorage on mount, deriving timer from seconds_remaining', async () => {
+    sessionStorage.setItem('nursingprep_exam_attempt_id', 'existing-attempt-888')
+    sessionStorage.setItem('nursingprep_exam_answers', JSON.stringify({ 'q-1': 'B' }))
+
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'resume_exam') {
+        return {
+          data: {
+            attempt_id: 'existing-attempt-888',
+            questions: mockQuestions,
+            seconds_remaining: 850, // 14:10
+          },
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(supabase.rpc).toHaveBeenCalledWith('resume_exam', { p_attempt_id: 'existing-attempt-888' })
+      expect(screen.getByText(/Question 1 of 2/i)).toBeDefined()
+      // Timer derived from seconds_remaining (850s = 14:10)
+      expect(screen.getByText('14:10')).toBeDefined()
+      // Option B was restored as selected
+      expect(screen.getByText(/Selected/i)).toBeDefined()
     })
   })
 

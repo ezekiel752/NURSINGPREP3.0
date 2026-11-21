@@ -6,9 +6,9 @@ const migrationsDir = path.resolve('supabase/migrations');
 const testPath = path.resolve('supabase/tests/20261121000003_exam_test.sql');
 const tempPath = path.resolve('supabase/tests/.temp_exam_test.sql');
 
-// Concatenate all migrations from 20261121000003 onward in filename order
+// Concatenate all migrations from 20261121000004 onward in filename order
 const migrationFiles = fs.readdirSync(migrationsDir)
-  .filter((file) => file >= '20261121000003' && file.endsWith('.sql'))
+  .filter((file) => file >= '20261121000004' && file.endsWith('.sql'))
   .sort();
 
 let combinedMigrations = '';
@@ -19,7 +19,7 @@ for (const file of migrationFiles) {
 
 const testSql = fs.readFileSync(testPath, 'utf8');
 
-const combinedSql = `begin;\n\n-- Migrations (from 20261121000003 onward)\n${combinedMigrations}\n-- Exam Test Body\n${testSql}\n\nrollback;\n`;
+const combinedSql = `begin;\n\n-- Migrations (from 20261121000004 onward)\n${combinedMigrations}\n-- Exam Test Body\n${testSql}\n\nrollback;\n`;
 
 fs.writeFileSync(tempPath, combinedSql, 'utf8');
 

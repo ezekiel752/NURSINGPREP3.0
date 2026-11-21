@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = session?.user ?? null
       setUser(currentUser)
       if (currentUser) {
-        setLoading(true)
+        // Do NOT set loading to true on token refresh or refocus
         await fetchProfile(currentUser.id)
       } else {
         setLevel(null)

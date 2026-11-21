@@ -209,6 +209,76 @@ begin
     raise exception 'FAIL: anon was able to execute submit_exam';
   end if;
 
-  raise notice 'ALL 6 EXAM FUNCTION CHECKS PASSED';
+  v_error_caught := false;
+  begin
+    perform public.resume_exam('55555555-5555-5555-5555-555555555555');
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: anon was able to execute resume_exam';
+  end if;
+
+  ----------------------------------------------------------------------
+  -- CHECK 7: other user''s attempt fails on resume_exam
+  ----------------------------------------------------------------------
+  set local role authenticated;
+  set local "request.jwt.claims" = '{"sub": "44444444-4444-4444-4444-444444444444", "role": "authenticated"}';
+
+  v_error_caught := false;
+  begin
+    perform public.resume_exam(v_attempt_id);
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: student 2 was able to resume student 1 attempt';
+  end if;
+
+  ----------------------------------------------------------------------
+  -- CHECK 8: submitted attempt fails on resume_exam
+  ----------------------------------------------------------------------
+  set local role authenticated;
+  set local "request.jwt.claims" = '{"sub": "33333333-3333-3333-3333-333333333333", "role": "authenticated"}';
+
+  v_error_caught := false;
+  begin
+    perform public.resume_exam('55555555-5555-5555-5555-555555555555');
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: was able to resume an already submitted attempt';
+  end if;
+
+  ----------------------------------------------------------------------
+  -- CHECK 9: resume_exam returns questions with no answers leaking
+  ----------------------------------------------------------------------
+  v_exam_res := public.resume_exam(v_attempt_id);
+  v_questions := v_exam_res -> 'questions';
+
+  if (v_exam_res ->> 'seconds_remaining') is null then
+    raise exception 'FAIL: resume_exam missing seconds_remaining';
+  end if;
+
+  if (v_exam_res ->> 'seconds_remaining')::int < 0 or (v_exam_res ->> 'seconds_remaining')::int > 1200 then
+    raise exception 'FAIL: seconds_remaining out of expected range [0, 1200]';
+  end if;
+
+  if jsonb_array_length(v_questions) = 0 then
+    raise exception 'FAIL: resume_exam returned empty questions';
+  end if;
+
+  for i in 0 .. jsonb_array_length(v_questions) - 1 loop
+    v_q := v_questions -> i;
+    if v_q ? 'correct_answer' then
+      raise exception 'FAIL: resume_exam questions leaked correct_answer key!';
+    end if;
+    if v_q ? 'explanation' then
+      raise exception 'FAIL: resume_exam questions leaked explanation key!';
+    end if;
+  end loop;
+
+  raise notice 'ALL 9 EXAM FUNCTION CHECKS PASSED';
 end;
 $$;

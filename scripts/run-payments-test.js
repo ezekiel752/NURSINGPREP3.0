@@ -44,9 +44,9 @@ function runTest(testFileName, minMigration) {
 }
 
 if (target === 'exam') {
-  runTest('20261121000003_exam_test.sql', '20261121000003');
+  runTest('20261121000003_exam_test.sql', '20261121000004');
 } else if (target === 'payments') {
-  runTest('20261121000001_payments_test.sql', '20261121000003');
+  runTest('20261121000001_payments_test.sql', '20261121000004');
 } else {
-  runTest('20261121000003_exam_test.sql', '20261121000003');
+  runTest('20261121000003_exam_test.sql', '20261121000004');
 }

@@ -30,13 +30,57 @@ export interface ExamSubmissionResponse {
 type ExamPhase = 'start' | 'in_progress' | 'results'
 
 const TOTAL_TIME_SECONDS = 20 * 60 // 20 minutes
+const STORAGE_ATTEMPT_ID_KEY = 'nursingprep_exam_attempt_id'
+const STORAGE_ANSWERS_KEY = 'nursingprep_exam_answers'
+
+function getStoredAttemptId(): string | null {
+  try {
+    return sessionStorage.getItem(STORAGE_ATTEMPT_ID_KEY)
+  } catch {
+    return null
+  }
+}
+
+function setStoredAttemptId(attemptId: string): void {
+  try {
+    sessionStorage.setItem(STORAGE_ATTEMPT_ID_KEY, attemptId)
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function getStoredAnswers(): Record<string, string> {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_ANSWERS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function setStoredAnswers(answers: Record<string, string>): void {
+  try {
+    sessionStorage.setItem(STORAGE_ANSWERS_KEY, JSON.stringify(answers))
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function clearStoredExam(): void {
+  try {
+    sessionStorage.removeItem(STORAGE_ATTEMPT_ID_KEY)
+    sessionStorage.removeItem(STORAGE_ANSWERS_KEY)
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 export function ExamPage() {
   const navigate = useNavigate()
 
   // Exam phase
   const [phase, setPhase] = useState<ExamPhase>('start')
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(() => Boolean(getStoredAttemptId()))
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
 
@@ -50,6 +94,95 @@ export function ExamPage() {
 
   // Guard against double submit
   const hasSubmittedRef = useRef(false)
+  const hasCheckedResumeRef = useRef(false)
+
+  // Submit exam callback
+  const submitExam = useCallback(async (currentAnswers: Record<string, string>, targetAttemptId?: string) => {
+    if (hasSubmittedRef.current) return
+    hasSubmittedRef.current = true
+    setIsSubmitting(true)
+    setShowConfirmModal(false)
+
+    const effectiveAttemptId = targetAttemptId || attemptId
+
+    try {
+      const { data, error } = await supabase.rpc('submit_exam', {
+        p_attempt_id: effectiveAttemptId,
+        p_answers: currentAnswers,
+      })
+
+      if (error || !data) {
+        toast.error(error?.message || 'Failed to submit exam. Please try again.')
+        hasSubmittedRef.current = false // Allow retry on failure
+        setIsSubmitting(false)
+        return
+      }
+
+      clearStoredExam()
+      setResultsData(data as ExamSubmissionResponse)
+      setPhase('results')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'An error occurred during submission.'
+      toast.error(msg)
+      hasSubmittedRef.current = false
+    } finally {
+      setIsSubmitting(false)
+    }
+  }, [attemptId])
+
+  // Resume unsubmitted attempt from sessionStorage on mount
+  useEffect(() => {
+    if (hasCheckedResumeRef.current) return
+    hasCheckedResumeRef.current = true
+
+    let mounted = true
+    const savedAttemptId = getStoredAttemptId()
+
+    if (savedAttemptId) {
+      const resumeAttempt = async () => {
+        try {
+          const { data, error } = await supabase.rpc('resume_exam', { p_attempt_id: savedAttemptId })
+          if (!mounted) return
+          if (error || !data) {
+            clearStoredExam()
+            setIsLoading(false)
+            return
+          }
+
+          const returnedQuestions: ExamQuestion[] = data.questions || []
+          const secondsRemaining: number = typeof data.seconds_remaining === 'number' ? data.seconds_remaining : 0
+          const restoredAnswers = getStoredAnswers()
+
+          if (returnedQuestions.length === 0) {
+            clearStoredExam()
+            setIsLoading(false)
+            return
+          }
+
+          setAttemptId(savedAttemptId)
+          setQuestions(returnedQuestions)
+          setAnswers(restoredAnswers)
+          setTimeLeft(secondsRemaining)
+          setCurrentIndex(0)
+          setPhase('in_progress')
+          setIsLoading(false)
+
+          if (secondsRemaining <= 0 && !hasSubmittedRef.current) {
+            submitExam(restoredAnswers, savedAttemptId)
+          }
+        } catch {
+          if (!mounted) return
+          clearStoredExam()
+          setIsLoading(false)
+        }
+      }
+      void resumeAttempt()
+    }
+
+    return () => {
+      mounted = false
+    }
+  }, [submitExam])
 
   // Start exam
   const handleStartExam = async () => {
@@ -71,6 +204,9 @@ export function ExamPage() {
         return
       }
 
+      setStoredAttemptId(returnedAttemptId)
+      setStoredAnswers({})
+
       setAttemptId(returnedAttemptId)
       setQuestions(returnedQuestions)
       setCurrentIndex(0)
@@ -85,37 +221,6 @@ export function ExamPage() {
       setIsLoading(false)
     }
   }
-
-  // Submit exam callback
-  const submitExam = useCallback(async (currentAnswers: Record<string, string>) => {
-    if (hasSubmittedRef.current) return
-    hasSubmittedRef.current = true
-    setIsSubmitting(true)
-    setShowConfirmModal(false)
-
-    try {
-      const { data, error } = await supabase.rpc('submit_exam', {
-        p_attempt_id: attemptId,
-        p_answers: currentAnswers,
-      })
-
-      if (error || !data) {
-        toast.error(error?.message || 'Failed to submit exam. Please try again.')
-        hasSubmittedRef.current = false // Allow retry on failure
-        setIsSubmitting(false)
-        return
-      }
-
-      setResultsData(data as ExamSubmissionResponse)
-      setPhase('results')
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'An error occurred during submission.'
-      toast.error(msg)
-      hasSubmittedRef.current = false
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [attemptId])
 
   // Timer countdown and auto-submit
   useEffect(() => {
@@ -138,25 +243,32 @@ export function ExamPage() {
     return () => clearInterval(interval)
   }, [phase, answers, submitExam])
 
+  const handleSelectOption = (questionId: string, optionKey: string) => {
+    setAnswers((prev) => {
+      const updated = { ...prev, [questionId]: optionKey }
+      setStoredAnswers(updated)
+      return updated
+    })
+  }
+
   // Keyboard navigation
   useEffect(() => {
     if (phase !== 'in_progress') return
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept if focus is inside an input/textarea
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
 
       const currentQ = questions[currentIndex]
       if (!currentQ) return
 
       if (e.key === '1' || e.key.toLowerCase() === 'a') {
-        setAnswers((prev) => ({ ...prev, [currentQ.id]: 'A' }))
+        handleSelectOption(currentQ.id, 'A')
       } else if (e.key === '2' || e.key.toLowerCase() === 'b') {
-        setAnswers((prev) => ({ ...prev, [currentQ.id]: 'B' }))
+        handleSelectOption(currentQ.id, 'B')
       } else if (e.key === '3' || e.key.toLowerCase() === 'c') {
-        setAnswers((prev) => ({ ...prev, [currentQ.id]: 'C' }))
+        handleSelectOption(currentQ.id, 'C')
       } else if (e.key === '4' || e.key.toLowerCase() === 'd') {
-        setAnswers((prev) => ({ ...prev, [currentQ.id]: 'D' }))
+        handleSelectOption(currentQ.id, 'D')
       } else if (e.key === 'ArrowRight' && currentIndex < questions.length - 1) {
         setCurrentIndex((i) => i + 1)
       } else if (e.key === 'ArrowLeft' && currentIndex > 0) {
@@ -179,6 +291,7 @@ export function ExamPage() {
 
   // Reset to retake
   const handleRetake = () => {
+    clearStoredExam()
     setAttemptId(null)
     setQuestions([])
     setCurrentIndex(0)
@@ -501,7 +614,7 @@ export function ExamPage() {
                   key={opt.key}
                   type="button"
                   whileTap={{ scale: 0.99 }}
-                  onClick={() => setAnswers((prev) => ({ ...prev, [currentQuestion.id]: opt.key }))}
+                  onClick={() => handleSelectOption(currentQuestion.id, opt.key)}
                   aria-label={`Option ${opt.key}: ${opt.text}`}
                   className={`w-full text-left p-4 rounded-xl border flex items-center justify-between gap-4 motion-safe:transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
                     isSelected
