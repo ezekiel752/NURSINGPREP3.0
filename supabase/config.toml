@@ -1,0 +1,5 @@
+[functions.payment-webhook]
+verify_jwt = false
+
+[functions.payment-initialize]
+verify_jwt = true
