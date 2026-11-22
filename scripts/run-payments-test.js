@@ -45,6 +45,13 @@ function runTest(testFileName, minMigration) {
 
 if (target === 'exam') {
   runTest('20261121000003_exam_test.sql', '20261121000004');
+} else if (target === 'admin') {
+  runTest('20261121000008_admin_functions_test.sql', '20261121000008');
+  const residueOutput = execSync(
+    `npx supabase db query --remote --yes "select (select count(*)::int from auth.users where id in ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'dddddddd-dddd-dddd-dddd-dddddddddddd')) as users_residue, (select count(*)::int from public.payments where reference = 'ref-admin-test-success') as payments_residue, (select count(*)::int from public.exam_attempts where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee') as attempts_residue;"`,
+    { encoding: 'utf8', stdio: 'pipe' }
+  );
+  console.log('RESIDUE CHECK:', residueOutput);
 } else if (target === 'payments-grants') {
   runTest('20261121000007_payments_grants_test.sql', '20261121000007');
   const residueOutput = execSync(
