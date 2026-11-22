@@ -6,6 +6,7 @@ import { AdminRoute } from './components/AdminRoute'
 import { AdminLayout } from './components/AdminLayout'
 import { AdminOverviewPage } from './pages/AdminOverviewPage'
 import { AdminStudentsPage } from './pages/AdminStudentsPage'
+import { AdminPaymentsPage } from './pages/AdminPaymentsPage'
 import { AdminPlaceholderPage } from './pages/AdminPlaceholderPage'
 import { LandingPage } from './pages/LandingPage'
 import { LoginPage } from './pages/LoginPage'
@@ -77,7 +78,7 @@ export default function App() {
             <Route path="overview" element={<Navigate to="/admin" replace />} />
             <Route path="students" element={<AdminStudentsPage />} />
             <Route path="questions" element={<AdminPlaceholderPage title="Questions" />} />
-            <Route path="payments" element={<AdminPlaceholderPage title="Payments" />} />
+            <Route path="payments" element={<AdminPaymentsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
