@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from '../lib/supabase'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 
 export interface StudentDetailData {
   id: string
@@ -72,9 +74,15 @@ export function StudentDetailDrawer({
   const [error, setError] = useState<string | null>(null)
   const [fetchKey, setFetchKey] = useState(0)
 
-  const drawerRef = useRef<HTMLDivElement>(null)
   const headingRef = useRef<HTMLHeadingElement>(null)
-  const previousActiveElementRef = useRef<HTMLElement | null>(null)
+
+  // Use focus trap hook to manage Tab wrapping, Escape closing, inert background, and focus return
+  const drawerRef = useFocusTrap<HTMLDivElement>({
+    active: isOpen,
+    onClose,
+    triggerElement,
+    initialFocusRef: headingRef,
+  })
 
   // Asynchronously fetch student detail without synchronous setState before await
   useEffect(() => {
@@ -107,37 +115,6 @@ export function StudentDetailDrawer({
     }
   }, [isOpen, studentId, fetchKey])
 
-  // Manage accessibility: focus trap entry, Escape key listener, and focus return
-  useEffect(() => {
-    if (!isOpen) return
-
-    previousActiveElementRef.current = triggerElement || (document.activeElement as HTMLElement | null)
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onClose()
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-
-    // Focus title when drawer opens
-    const focusTimer = setTimeout(() => {
-      headingRef.current?.focus()
-    }, 50)
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      clearTimeout(focusTimer)
-
-      // Restore focus to opener element
-      if (previousActiveElementRef.current && typeof previousActiveElementRef.current.focus === 'function') {
-        previousActiveElementRef.current.focus()
-      }
-    }
-  }, [isOpen, onClose, triggerElement])
-
   const loading = isOpen && Boolean(studentId) && (!data || data.id !== studentId) && !error
   const questionsCount = data?.stats?.questions_answered ?? 0
   const accuracyText = questionsCount > 0 ? `${data?.stats?.accuracy_percent ?? 0}%` : '—'
@@ -147,7 +124,8 @@ export function StudentDetailDrawer({
     setFetchKey((k) => k + 1)
   }
 
-  return (
+  // Render modal drawer directly into document.body portal so siblings can be marked inert
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
@@ -260,11 +238,11 @@ export function StudentDetailDrawer({
                       <div className="px-4 py-2.5 flex justify-between items-center gap-4">
                         <span className="text-muted text-xs font-medium">Status</span>
                         {data.is_active ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
                             Active
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
                             Pending Payment
                           </span>
                         )}
@@ -346,6 +324,7 @@ export function StudentDetailDrawer({
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   )
 }

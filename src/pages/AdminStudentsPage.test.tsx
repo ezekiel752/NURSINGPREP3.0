@@ -541,4 +541,339 @@ describe('AdminStudentsPage Tests', () => {
     expect(screen.getByText('Fast Response Student')).toBeDefined()
     expect(screen.queryByText('Slow Response Student')).toBeNull()
   })
+
+  it('focus trap: Tab wraps from last to first and Shift+Tab wraps from first to last', async () => {
+    // Return error on detail so drawer renders close button and Retry button
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'is_admin') return { data: true, error: null }
+      if (fnName === 'admin_list_students') return { data: sampleStudentsList, error: null }
+      if (fnName === 'admin_student_detail') {
+        return { data: null, error: { message: 'Failed to load details' } }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/admin/students']}>
+        <AuthProvider>
+          <Routes>
+            <Route
+              path="/admin"
+              element={
+                <AdminRoute>
+                  <AdminLayout />
+                </AdminRoute>
+              }
+            >
+              <Route path="students" element={<AdminStudentsPage />} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Florence Nightingale')).toBeDefined()
+    })
+
+    const row = screen.getByRole('button', {
+      name: 'View details for Florence Nightingale',
+    })
+    fireEvent.click(row)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Close details drawer' })).toBeDefined()
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeDefined()
+    })
+
+    const closeBtn = screen.getByRole('button', { name: 'Close details drawer' })
+    const retryBtn = screen.getByRole('button', { name: 'Retry' })
+
+    // Tab from last element (Retry) wraps to first element (Close)
+    retryBtn.focus()
+    expect(document.activeElement).toBe(retryBtn)
+    fireEvent.keyDown(retryBtn, { key: 'Tab' })
+    expect(document.activeElement).toBe(closeBtn)
+
+    // Shift+Tab from first element (Close) wraps to last element (Retry)
+    closeBtn.focus()
+    expect(document.activeElement).toBe(closeBtn)
+    fireEvent.keyDown(closeBtn, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(retryBtn)
+  })
+
+  it('focus trap: background content is not tabbable while open', async () => {
+    render(
+      <MemoryRouter initialEntries={['/admin/students']}>
+        <AuthProvider>
+          <Routes>
+            <Route
+              path="/admin"
+              element={
+                <AdminRoute>
+                  <AdminLayout />
+                </AdminRoute>
+              }
+            >
+              <Route path="students" element={<AdminStudentsPage />} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Florence Nightingale')).toBeDefined()
+    })
+
+    // Before opening, main background is not inert
+    const mainEl = document.querySelector('main')
+    expect(mainEl?.closest('[inert]')).toBeNull()
+
+    // Open drawer
+    const row = screen.getByRole('button', {
+      name: 'View details for Florence Nightingale',
+    })
+    fireEvent.click(row)
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeDefined()
+    })
+
+    // Background main content is inert while drawer is open
+    expect(mainEl?.closest('[inert]')).not.toBeNull()
+
+    // Close drawer via Escape
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    // Background inert attribute is removed on close
+    expect(mainEl?.closest('[inert]')).toBeNull()
+  })
+
+  it('pagination proof: Next calls admin_list_students with p_offset = pageSize, and Prev returns to p_offset 0', async () => {
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'is_admin') return { data: true, error: null }
+      if (fnName === 'admin_list_students') {
+        return {
+          data: [
+            {
+              id: 'student-1',
+              full_name: 'Student 1',
+              email: 'student1@example.com',
+              level: 200,
+              is_active: true,
+              created_at: '2026-11-20T10:00:00Z',
+              total_count: 50,
+            },
+          ],
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/admin/students']}>
+        <AuthProvider>
+          <Routes>
+            <Route
+              path="/admin"
+              element={
+                <AdminRoute>
+                  <AdminLayout />
+                </AdminRoute>
+              }
+            >
+              <Route path="students" element={<AdminStudentsPage />} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 of 3')).toBeDefined()
+    })
+
+    // Click Next
+    const nextBtn = screen.getByRole('button', { name: 'Next page' })
+    fireEvent.click(nextBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 2 of 3')).toBeDefined()
+    })
+
+    // Next must have called admin_list_students with p_offset = 20 (pageSize)
+    const calls = mockRpc.mock.calls.filter((call) => call[0] === 'admin_list_students')
+    const nextCall = calls[calls.length - 1]
+    expect(nextCall[1].p_offset).toBe(20)
+
+    // Click Prev
+    const prevBtn = screen.getByRole('button', { name: 'Previous page' })
+    fireEvent.click(prevBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 of 3')).toBeDefined()
+    })
+
+    // Prev must return to p_offset = 0
+    const prevCalls = mockRpc.mock.calls.filter((call) => call[0] === 'admin_list_students')
+    const lastPrevCall = prevCalls[prevCalls.length - 1]
+    expect(lastPrevCall[1].p_offset).toBe(0)
+  })
+
+  it('pagination proof: Next is disabled on the last page', async () => {
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'is_admin') return { data: true, error: null }
+      if (fnName === 'admin_list_students') {
+        return {
+          data: [
+            {
+              id: 'student-1',
+              full_name: 'Student 1',
+              email: 'student1@example.com',
+              level: 200,
+              is_active: true,
+              created_at: '2026-11-20T10:00:00Z',
+              total_count: 40, // 2 pages at 20 rows/page
+            },
+          ],
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/admin/students']}>
+        <AuthProvider>
+          <Routes>
+            <Route
+              path="/admin"
+              element={
+                <AdminRoute>
+                  <AdminLayout />
+                </AdminRoute>
+              }
+            >
+              <Route path="students" element={<AdminStudentsPage />} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 1 of 2')).toBeDefined()
+    })
+
+    const nextBtn = screen.getByRole('button', { name: 'Next page' })
+    expect((nextBtn as HTMLButtonElement).disabled).toBe(false)
+
+    // Advance to page 2 (last page)
+    fireEvent.click(nextBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('Page 2 of 2')).toBeDefined()
+    })
+
+    // Next button must be disabled on the last page
+    expect((nextBtn as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('pagination proof: changing page size resets p_offset to 0 and keeps search/status/level', async () => {
+    vi.useFakeTimers()
+
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'is_admin') return { data: true, error: null }
+      if (fnName === 'admin_list_students') {
+        return {
+          data: [
+            {
+              id: 'student-1',
+              full_name: 'Student 1',
+              email: 'student1@example.com',
+              level: 300,
+              is_active: true,
+              created_at: '2026-11-20T10:00:00Z',
+              total_count: 60,
+            },
+          ],
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/admin/students']}>
+        <AuthProvider>
+          <Routes>
+            <Route
+              path="/admin"
+              element={
+                <AdminRoute>
+                  <AdminLayout />
+                </AdminRoute>
+              }
+            >
+              <Route path="students" element={<AdminStudentsPage />} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>
+    )
+
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    // Set search, status, and level filters
+    const searchInput = screen.getByPlaceholderText('Search by email…')
+    fireEvent.change(searchInput, { target: { value: 'mary' } })
+
+    const statusSelect = screen.getByLabelText('Filter by status')
+    fireEvent.change(statusSelect, { target: { value: 'active' } })
+
+    const levelSelect = screen.getByLabelText('Filter by level')
+    fireEvent.change(levelSelect, { target: { value: '300' } })
+
+    await act(async () => {
+      vi.advanceTimersByTime(350)
+      await vi.runAllTimersAsync()
+    })
+
+    // Advance to page 2
+    const nextBtn = screen.getByRole('button', { name: 'Next page' })
+    fireEvent.click(nextBtn)
+
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    // Change page size to 10
+    const pageSizeSelect = screen.getByLabelText('Page size selector')
+    fireEvent.change(pageSizeSelect, { target: { value: '10' } })
+
+    await act(async () => {
+      await vi.runAllTimersAsync()
+    })
+
+    vi.useRealTimers()
+
+    // Verify p_offset was reset to 0, limit is 10, and search/status/level are preserved
+    const calls = mockRpc.mock.calls.filter((call) => call[0] === 'admin_list_students')
+    const lastCall = calls[calls.length - 1]
+    expect(lastCall[1]).toEqual({
+      p_search: 'mary',
+      p_status: 'active',
+      p_level: 300,
+      p_limit: 10,
+      p_offset: 0,
+    })
+  })
 })
