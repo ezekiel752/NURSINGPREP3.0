@@ -26,6 +26,7 @@ export interface ExamSubmissionResponse {
   total: number
   results: ExamResultItem[]
   late?: boolean
+  auto_submitted?: boolean
 }
 
 type ExamPhase = 'start' | 'in_progress' | 'results'
@@ -84,6 +85,7 @@ export function ExamPage() {
   const [isLoading, setIsLoading] = useState(() => Boolean(getStoredAttemptId()))
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<string | null>(null)
 
   // Exam state
   const [attemptId, setAttemptId] = useState<string | null>(null)
@@ -92,6 +94,14 @@ export function ExamPage() {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [timeLeft, setTimeLeft] = useState(TOTAL_TIME_SECONDS)
   const [resultsData, setResultsData] = useState<ExamSubmissionResponse | null>(null)
+
+  // Auto-save refs
+  const pendingChangesRef = useRef<Record<string, string>>({})
+  const isDirtyRef = useRef(false)
+  const isSavingRef = useRef(false)
+  const retryCountRef = useRef(0)
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Timer deadline ref and state
   const deadlineRef = useRef<number | null>(null)
@@ -104,6 +114,73 @@ export function ExamPage() {
   // Guard against double submit
   const hasSubmittedRef = useRef(false)
 
+  // Flush pending changes to server
+  const flushPendingChangesRef = useRef<((targetAttemptId?: string | null) => Promise<void>) | null>(null)
+
+  const flushPendingChanges = useCallback(async (targetAttemptId?: string | null) => {
+    const effectiveAttemptId = targetAttemptId || attemptId
+    if (!effectiveAttemptId) return
+    if (!isDirtyRef.current || Object.keys(pendingChangesRef.current).length === 0) {
+      return
+    }
+
+    if (isSavingRef.current) return
+    isSavingRef.current = true
+
+    const changesToSend = { ...pendingChangesRef.current }
+    setSaveStatus('Saving...')
+
+    try {
+      const { error } = await supabase.rpc('save_answers', {
+        p_attempt_id: effectiveAttemptId,
+        p_changes: changesToSend,
+      })
+
+      if (error) {
+        throw error
+      }
+
+      for (const [key, val] of Object.entries(changesToSend)) {
+        if (pendingChangesRef.current[key] === val) {
+          delete pendingChangesRef.current[key]
+        }
+      }
+
+      if (Object.keys(pendingChangesRef.current).length === 0) {
+        isDirtyRef.current = false
+        setSaveStatus(null)
+      }
+
+      retryCountRef.current = 0
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = null
+      }
+    } catch (err: unknown) {
+      isDirtyRef.current = true
+      setSaveStatus("Couldn't save, retrying")
+      const msg = err instanceof Error ? err.message : 'Failed to save answers.'
+      toast.error(msg)
+
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current)
+      }
+      const currentRetry = retryCountRef.current
+      retryCountRef.current = currentRetry + 1
+      const delayMs = currentRetry < 3 ? (currentRetry + 1) * 1000 : 10000
+
+      retryTimerRef.current = setTimeout(() => {
+        void flushPendingChangesRef.current?.(effectiveAttemptId)
+      }, delayMs)
+    } finally {
+      isSavingRef.current = false
+    }
+  }, [attemptId])
+
+  useEffect(() => {
+    flushPendingChangesRef.current = flushPendingChanges
+  }, [flushPendingChanges])
+
   // Submit exam callback
   const submitExam = useCallback(async (currentAnswers: Record<string, string>, targetAttemptId?: string) => {
     if (hasSubmittedRef.current) return
@@ -112,6 +189,20 @@ export function ExamPage() {
     setShowConfirmModal(false)
 
     const effectiveAttemptId = targetAttemptId || attemptId
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = null
+    }
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current)
+      retryTimerRef.current = null
+    }
+
+    // Flush pending changes right before submit
+    if (isDirtyRef.current) {
+      await flushPendingChanges(effectiveAttemptId)
+    }
 
     try {
       const { data, error } = await supabase.rpc('submit_exam', {
@@ -136,12 +227,51 @@ export function ExamPage() {
     } finally {
       setIsSubmitting(false)
     }
-  }, [attemptId])
+  }, [attemptId, flushPendingChanges])
 
   const submitExamRef = useRef(submitExam)
   useEffect(() => {
     submitExamRef.current = submitExam
   }, [submitExam])
+
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    }
+  }, [])
+
+  // Flush on visibilitychange hidden and pagehide
+  useEffect(() => {
+    if (phase !== 'in_progress') return
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        if (debounceTimerRef.current) {
+          clearTimeout(debounceTimerRef.current)
+          debounceTimerRef.current = null
+        }
+        void flushPendingChanges()
+      }
+    }
+
+    const handlePageHide = () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+        debounceTimerRef.current = null
+      }
+      void flushPendingChanges()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('pagehide', handlePageHide)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('pagehide', handlePageHide)
+    }
+  }, [phase, flushPendingChanges])
 
   // Resume unsubmitted attempt from sessionStorage on mount
   useEffect(() => {
@@ -184,9 +314,32 @@ export function ExamPage() {
           return
         }
 
+        // If the attempt was already submitted or auto-submitted, show results
+        if (data.status === 'submitted') {
+          const { data: resData, error: resError } = await supabase.rpc('get_attempt_result', {
+            p_attempt_id: savedAttemptId,
+          })
+
+          if (resError || !resData) {
+            fallbackToStart(resError?.message || 'Failed to fetch exam results.')
+            return
+          }
+
+          clearStoredExam()
+          setResultsData(resData as ExamSubmissionResponse)
+          setPhase('results')
+          setIsLoading(false)
+          return
+        }
+
         const returnedQuestions: ExamQuestion[] = data.questions || []
         const secondsRemaining: number = typeof data.seconds_remaining === 'number' ? data.seconds_remaining : 0
-        const restoredAnswers = getStoredAnswers()
+
+        // Restore answers from the server on resume (sessionStorage is a cache only)
+        const serverAnswers: Record<string, string> = data.answers || {}
+        const cachedAnswers = getStoredAnswers()
+        const restoredAnswers = { ...cachedAnswers, ...serverAnswers }
+        setStoredAnswers(restoredAnswers)
 
         if (returnedQuestions.length === 0) {
           fallbackToStart('No questions found for this exam attempt.')
@@ -228,6 +381,13 @@ export function ExamPage() {
   // Start exam
   const handleStartExam = async () => {
     setIsLoading(true)
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    pendingChangesRef.current = {}
+    isDirtyRef.current = false
+    setSaveStatus(null)
+    retryCountRef.current = 0
+
     try {
       const { data, error } = await supabase.rpc('get_exam_questions', { p_count: 20 })
       if (error || !data) {
@@ -298,13 +458,25 @@ export function ExamPage() {
     }
   }, [phase, deadline])
 
-  const handleSelectOption = (questionId: string, optionKey: string) => {
+  const handleSelectOption = useCallback((questionId: string, optionKey: string) => {
     setAnswers((prev) => {
       const updated = { ...prev, [questionId]: optionKey }
       setStoredAnswers(updated)
       return updated
     })
-  }
+
+    // Track pending changes and dirty state
+    pendingChangesRef.current[questionId] = optionKey
+    isDirtyRef.current = true
+
+    // Debounce save (1s)
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      void flushPendingChangesRef.current?.()
+    }, 1000)
+  }, [])
 
   // Keyboard navigation
   useEffect(() => {
@@ -333,7 +505,7 @@ export function ExamPage() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [phase, currentIndex, questions])
+  }, [phase, currentIndex, questions, handleSelectOption])
 
   const formatTimer = (totalSeconds: number) => {
     const minutes = Math.floor(totalSeconds / 60)
@@ -347,6 +519,18 @@ export function ExamPage() {
   // Reset to retake
   const handleRetake = () => {
     clearStoredExam()
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = null
+    }
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current)
+      retryTimerRef.current = null
+    }
+    pendingChangesRef.current = {}
+    isDirtyRef.current = false
+    setSaveStatus(null)
+    retryCountRef.current = 0
     deadlineRef.current = null
     setDeadline(null)
     setAttemptId(null)
@@ -457,6 +641,11 @@ export function ExamPage() {
                 {resultsData.late && (
                   <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-border text-muted">
                     Submitted after time limit
+                  </span>
+                )}
+                {resultsData.auto_submitted && (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-border text-muted">
+                    Auto-submitted
                   </span>
                 )}
               </div>
@@ -610,6 +799,11 @@ export function ExamPage() {
         <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <span className="font-extrabold text-sm sm:text-base tracking-tight">NursingPrep CBT</span>
+            {saveStatus && (
+              <span className="text-xs text-muted font-medium ml-2" role="status" aria-live="polite">
+                {saveStatus}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-4">

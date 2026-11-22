@@ -15,6 +15,8 @@ declare
   v_error_caught boolean;
   v_score int;
   v_total int;
+  v_res jsonb;
+  v_result_row record;
 begin
   -- Setup test users in auth.users
   insert into auth.users (id, email)
@@ -64,7 +66,7 @@ begin
     correct_answer = excluded.correct_answer;
 
   ----------------------------------------------------------------------
-  -- CHECK 1: inactive student gets an error on get_exam_questions & submit_exam
+  -- CHECK 1: inactive student gets an error on get_exam_questions & submit_exam & save_answers
   ----------------------------------------------------------------------
   set local role authenticated;
   set local "request.jwt.claims" = '{"sub": "44444444-4444-4444-4444-444444444444", "role": "authenticated"}';
@@ -87,6 +89,16 @@ begin
   end;
   if not v_error_caught then
     raise exception 'FAIL: inactive student was able to call submit_exam';
+  end if;
+
+  v_error_caught := false;
+  begin
+    perform public.save_answers('00000000-0000-0000-0000-000000000000', '{}'::jsonb);
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: inactive student was able to call save_answers';
   end if;
 
   ----------------------------------------------------------------------
@@ -173,7 +185,7 @@ begin
     raise exception 'FAIL: expected total 2 but got %', v_total;
   end if;
 
-  -- CHECK 4: Double submit fails
+  -- Double submit fails
   v_error_caught := false;
   begin
     perform public.submit_exam('55555555-5555-5555-5555-555555555555', '{}'::jsonb);
@@ -185,7 +197,7 @@ begin
   end if;
 
   ----------------------------------------------------------------------
-  -- CHECK 6: anon cannot execute
+  -- CHECK 6: anon cannot execute anything new or old
   ----------------------------------------------------------------------
   set local role anon;
 
@@ -219,6 +231,46 @@ begin
     raise exception 'FAIL: anon was able to execute resume_exam';
   end if;
 
+  v_error_caught := false;
+  begin
+    perform public.save_answers('55555555-5555-5555-5555-555555555555', '{}'::jsonb);
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: anon was able to execute save_answers';
+  end if;
+
+  v_error_caught := false;
+  begin
+    perform public.get_attempt_result('55555555-5555-5555-5555-555555555555');
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: anon was able to execute get_attempt_result';
+  end if;
+
+  v_error_caught := false;
+  begin
+    perform public.finalize_expired_attempts();
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: anon was able to execute finalize_expired_attempts';
+  end if;
+
+  v_error_caught := false;
+  begin
+    perform public.grade_attempt('55555555-5555-5555-5555-555555555555');
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: anon was able to execute grade_attempt';
+  end if;
+
   ----------------------------------------------------------------------
   -- CHECK 7: other user''s attempt fails on resume_exam
   ----------------------------------------------------------------------
@@ -236,19 +288,17 @@ begin
   end if;
 
   ----------------------------------------------------------------------
-  -- CHECK 8: submitted attempt fails on resume_exam
+  -- CHECK 8: submitted attempt returns status = 'submitted' on resume_exam without sensitive data
   ----------------------------------------------------------------------
   set local role authenticated;
   set local "request.jwt.claims" = '{"sub": "33333333-3333-3333-3333-333333333333", "role": "authenticated"}';
 
-  v_error_caught := false;
-  begin
-    perform public.resume_exam('55555555-5555-5555-5555-555555555555');
-  exception when others then
-    v_error_caught := true;
-  end;
-  if not v_error_caught then
-    raise exception 'FAIL: was able to resume an already submitted attempt';
+  v_exam_res := public.resume_exam('55555555-5555-5555-5555-555555555555');
+  if (v_exam_res ->> 'status') <> 'submitted' then
+    raise exception 'FAIL: resume_exam on submitted attempt did not return status = submitted';
+  end if;
+  if v_exam_res ? 'questions' or v_exam_res ? 'answers' then
+    raise exception 'FAIL: resume_exam on submitted attempt leaked sensitive data';
   end if;
 
   ----------------------------------------------------------------------
@@ -282,22 +332,21 @@ begin
   ----------------------------------------------------------------------
   -- CHECK 10: Late flag check (on-time late=false, backdated > 21 min late=true)
   ----------------------------------------------------------------------
-  -- Verify the on-time submission from check 4 had late = false
   if (v_submit_res ->> 'late')::boolean is not false then
     raise exception 'FAIL: on-time submit expected late=false but got %', (v_submit_res ->> 'late');
   end if;
 
-  -- Create an attempt with created_at backdated beyond 21 minutes
   reset role;
-  insert into public.exam_attempts (id, user_id, question_ids, total, created_at)
+  insert into public.exam_attempts (id, user_id, question_ids, total, created_at, answers)
   values (
     '66666666-6666-6666-6666-666666666666',
     v_student1_id,
     array[v_q1_id, v_q2_id],
     2,
-    now() - interval '22 minutes'
+    now() - interval '22 minutes',
+    jsonb_build_object(v_q1_id::text, 'a')
   )
-  on conflict (id) do nothing;
+  on conflict (id) do update set answers = excluded.answers;
 
   set local role authenticated;
   set local "request.jwt.claims" = '{"sub": "33333333-3333-3333-3333-333333333333", "role": "authenticated"}';
@@ -315,6 +364,190 @@ begin
     raise exception 'FAIL: backdated attempt was not properly graded, expected score 1 but got %', (v_submit_res ->> 'score');
   end if;
 
-  raise notice 'ALL 10 EXAM FUNCTION CHECKS PASSED';
+  ----------------------------------------------------------------------
+  -- CHECK 11: save_answers rejects another user''s attempt
+  ----------------------------------------------------------------------
+  set local role authenticated;
+  set local "request.jwt.claims" = '{"sub": "44444444-4444-4444-4444-444444444444", "role": "authenticated"}';
+
+  v_error_caught := false;
+  begin
+    perform public.save_answers(v_attempt_id, jsonb_build_object(v_q1_id::text, 'a'));
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: student 2 was able to save answers on student 1 attempt';
+  end if;
+
+  ----------------------------------------------------------------------
+  -- CHECK 12: save_answers rejects after the deadline
+  ----------------------------------------------------------------------
+  set local role authenticated;
+  set local "request.jwt.claims" = '{"sub": "33333333-3333-3333-3333-333333333333", "role": "authenticated"}';
+
+  -- Create attempt 77777777 backdated 25 minutes
+  reset role;
+  insert into public.exam_attempts (id, user_id, question_ids, total, created_at, answers)
+  values (
+    '77777777-7777-7777-7777-777777777777',
+    v_student1_id,
+    array[v_q1_id, v_q2_id],
+    2,
+    now() - interval '25 minutes',
+    jsonb_build_object(v_q1_id::text, 'a')
+  )
+  on conflict (id) do nothing;
+
+  set local role authenticated;
+  set local "request.jwt.claims" = '{"sub": "33333333-3333-3333-3333-333333333333", "role": "authenticated"}';
+
+  v_error_caught := false;
+  begin
+    perform public.save_answers('77777777-7777-7777-7777-777777777777', jsonb_build_object(v_q2_id::text, 'b'));
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: save_answers succeeded on expired attempt beyond deadline';
+  end if;
+
+  ----------------------------------------------------------------------
+  -- CHECK 13: submit after deadline ignores new answers and grades saved answers
+  ----------------------------------------------------------------------
+  -- Attempt 77777777 has saved answers: q1='a' (correct, 1 pt).
+  -- Call submit_exam with q1='c' (wrong) and q2='b' (correct).
+  -- If new answers were accepted, score would be 1 (or if overwritten, 1). But q1 should remain 'a' and q2 omitted, score 1.
+  -- Let's test with new answers providing only wrong answers: q1='c', q2='c'. If merged, score would be 0.
+  v_submit_res := public.submit_exam(
+    '77777777-7777-7777-7777-777777777777',
+    jsonb_build_object(v_q1_id::text, 'c', v_q2_id::text, 'c')
+  );
+
+  -- Since it is past deadline, new answers {q1: 'c', q2: 'c'} must be IGNORED!
+  -- Only saved answers {q1: 'a'} are graded -> score must be 1.
+  if (v_submit_res ->> 'score')::int <> 1 then
+    raise exception 'FAIL: submit after deadline did not ignore new answers, expected score 1 but got %', (v_submit_res ->> 'score');
+  end if;
+
+  ----------------------------------------------------------------------
+  -- CHECK 14: finalize_expired_attempts finalises only expired attempts, grades saved answers, sets auto_submitted
+  ----------------------------------------------------------------------
+  reset role;
+  -- Expired attempt 99999999: backdated 30 minutes, saved answers q1='a', q2='b' (both correct -> score 2)
+  insert into public.exam_attempts (id, user_id, question_ids, total, created_at, answers)
+  values (
+    '99999999-9999-9999-9999-999999999999',
+    v_student1_id,
+    array[v_q1_id, v_q2_id],
+    2,
+    now() - interval '30 minutes',
+    jsonb_build_object(v_q1_id::text, 'a', v_q2_id::text, 'b')
+  )
+  on conflict (id) do nothing;
+
+  -- Active attempt 88888888: created now, should NOT be finalized
+  insert into public.exam_attempts (id, user_id, question_ids, total, created_at, answers)
+  values (
+    '88888888-8888-8888-8888-888888888888',
+    v_student1_id,
+    array[v_q1_id, v_q2_id],
+    2,
+    now(),
+    jsonb_build_object(v_q1_id::text, 'a')
+  )
+  on conflict (id) do nothing;
+
+  -- Run finalize_expired_attempts() as internal/security definer
+  perform public.finalize_expired_attempts();
+
+  -- Check attempt 99999999: must be submitted, auto_submitted=true, score=2
+  select submitted_at, auto_submitted, score, total
+  into v_result_row
+  from public.exam_attempts
+  where id = '99999999-9999-9999-9999-999999999999';
+
+  if v_result_row.submitted_at is null then
+    raise exception 'FAIL: expired attempt 99999999 was not finalized';
+  end if;
+  if v_result_row.auto_submitted is not true then
+    raise exception 'FAIL: expired attempt 99999999 auto_submitted is not true';
+  end if;
+  if v_result_row.score <> 2 then
+    raise exception 'FAIL: expired attempt 99999999 score expected 2 but got %', v_result_row.score;
+  end if;
+
+  -- Check attempt 88888888: must NOT be finalized
+  select submitted_at, auto_submitted
+  into v_result_row
+  from public.exam_attempts
+  where id = '88888888-8888-8888-8888-888888888888';
+
+  if v_result_row.submitted_at is not null then
+    raise exception 'FAIL: active attempt 88888888 was finalized prematurely';
+  end if;
+  if v_result_row.auto_submitted is true then
+    raise exception 'FAIL: active attempt 88888888 has auto_submitted = true';
+  end if;
+
+  ----------------------------------------------------------------------
+  -- CHECK 15: get_attempt_result refuses another user''s attempt and returns same shape for owner
+  ----------------------------------------------------------------------
+  -- Student 2 cannot call get_attempt_result on student 1's attempt 99999999
+  set local role authenticated;
+  set local "request.jwt.claims" = '{"sub": "44444444-4444-4444-4444-444444444444", "role": "authenticated"}';
+
+  v_error_caught := false;
+  begin
+    perform public.get_attempt_result('99999999-9999-9999-9999-999999999999');
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: student 2 was able to call get_attempt_result on student 1 attempt';
+  end if;
+
+  -- Student 1 calls get_attempt_result on attempt 99999999
+  set local role authenticated;
+  set local "request.jwt.claims" = '{"sub": "33333333-3333-3333-3333-333333333333", "role": "authenticated"}';
+
+  v_res := public.get_attempt_result('99999999-9999-9999-9999-999999999999');
+  if (v_res ->> 'score')::int <> 2 then
+    raise exception 'FAIL: get_attempt_result score expected 2 but got %', (v_res ->> 'score');
+  end if;
+  if (v_res ->> 'total')::int <> 2 then
+    raise exception 'FAIL: get_attempt_result total expected 2 but got %', (v_res ->> 'total');
+  end if;
+  if not (v_res ? 'results') or jsonb_array_length(v_res -> 'results') <> 2 then
+    raise exception 'FAIL: get_attempt_result missing or incomplete results array';
+  end if;
+  if (v_res ->> 'auto_submitted')::boolean is not true then
+    raise exception 'FAIL: get_attempt_result auto_submitted expected true';
+  end if;
+
+  ----------------------------------------------------------------------
+  -- CHECK 16: authenticated user cannot execute internal grade_attempt or finalize_expired_attempts
+  ----------------------------------------------------------------------
+  v_error_caught := false;
+  begin
+    perform public.grade_attempt('88888888-8888-8888-8888-888888888888');
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: authenticated was able to execute internal grade_attempt';
+  end if;
+
+  v_error_caught := false;
+  begin
+    perform public.finalize_expired_attempts();
+  exception when others then
+    v_error_caught := true;
+  end;
+  if not v_error_caught then
+    raise exception 'FAIL: authenticated was able to execute finalize_expired_attempts';
+  end if;
+
+  raise notice 'ALL 16 EXAM FUNCTION CHECKS PASSED';
 end;
 $$;

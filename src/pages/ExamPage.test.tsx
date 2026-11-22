@@ -533,4 +533,152 @@ describe('ExamPage component', () => {
       expect(screen.getByText(/Submitted after time limit/i)).toBeDefined()
     })
   })
+
+  it('save fires debounced after 1 second on answer selection', async () => {
+    vi.useFakeTimers()
+
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'get_exam_questions') {
+        return {
+          data: {
+            attempt_id: 'debounce-attempt-1',
+            questions: mockQuestions,
+          },
+          error: null,
+        }
+      }
+      if (fnName === 'save_answers') {
+        return {
+          data: { success: true },
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /start exam/i }))
+    })
+
+    expect(screen.getByText(/Question 1 of 2/i)).toBeDefined()
+
+    // Select Option A for Question 1
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Option A:/i }))
+    })
+
+    // Advance 500ms -> save_answers should not have been called yet
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(mockRpc.mock.calls.filter((c: unknown[]) => c[0] === 'save_answers').length).toBe(0)
+
+    // Advance another 500ms (1000ms debounce reached)
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(mockRpc).toHaveBeenCalledWith('save_answers', {
+      p_attempt_id: 'debounce-attempt-1',
+      p_changes: { 'q-1': 'A' },
+    })
+  })
+
+  it('restores answers from the server on resume', async () => {
+    sessionStorage.setItem('nursingprep_exam_attempt_id', 'restore-attempt-777')
+    sessionStorage.setItem('nursingprep_exam_answers', JSON.stringify({}))
+
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'resume_exam') {
+        return {
+          data: {
+            attempt_id: 'restore-attempt-777',
+            questions: mockQuestions,
+            seconds_remaining: 900,
+            answers: { 'q-1': 'B' },
+          },
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(supabase.rpc).toHaveBeenCalledWith('resume_exam', { p_attempt_id: 'restore-attempt-777' })
+      expect(screen.getByText(/Question 1 of 2/i)).toBeDefined()
+      expect(screen.getByText(/Selected/i)).toBeDefined()
+    })
+
+    const stored = JSON.parse(sessionStorage.getItem('nursingprep_exam_answers') || '{}')
+    expect(stored['q-1']).toBe('B')
+  })
+
+  it('shows results via get_attempt_result when attempt was auto-submitted', async () => {
+    sessionStorage.setItem('nursingprep_exam_attempt_id', 'auto-sub-attempt-999')
+
+    mockRpc.mockImplementation(async (fnName: string) => {
+      if (fnName === 'resume_exam') {
+        return {
+          data: {
+            attempt_id: 'auto-sub-attempt-999',
+            status: 'submitted',
+          },
+          error: null,
+        }
+      }
+      if (fnName === 'get_attempt_result') {
+        return {
+          data: {
+            score: 2,
+            total: 2,
+            auto_submitted: true,
+            results: [
+              {
+                id: 'q-1',
+                chosen: 'A',
+                correct_answer: 'A',
+                explanation: 'Explanation for Q1',
+              },
+              {
+                id: 'q-2',
+                chosen: 'B',
+                correct_answer: 'B',
+                explanation: 'Explanation for Q2',
+              },
+            ],
+          },
+          error: null,
+        }
+      }
+      return { data: null, error: null }
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(supabase.rpc).toHaveBeenCalledWith('resume_exam', { p_attempt_id: 'auto-sub-attempt-999' })
+      expect(supabase.rpc).toHaveBeenCalledWith('get_attempt_result', { p_attempt_id: 'auto-sub-attempt-999' })
+      expect(screen.getByText('2 / 2')).toBeDefined()
+      expect(screen.getByText(/Auto-submitted/i)).toBeDefined()
+      expect(screen.getByText(/Detailed Solutions/i)).toBeDefined()
+      expect(screen.getByText(/Explanation for Q1/i)).toBeDefined()
+    })
+
+    expect(sessionStorage.getItem('nursingprep_exam_attempt_id')).toBeNull()
+  })
 })
