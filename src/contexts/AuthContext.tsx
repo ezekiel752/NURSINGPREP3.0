@@ -7,6 +7,7 @@ export interface AuthContextType {
   loading: boolean
   level: number | null
   isActive: boolean
+  isAdmin: boolean
   refreshProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -16,6 +17,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   level: null,
   isActive: false,
+  isAdmin: false,
   refreshProfile: async () => {},
   signOut: async () => {},
 })
@@ -24,6 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [level, setLevel] = useState<number | null>(null)
   const [isActive, setIsActive] = useState<boolean>(false)
+  const [isAdmin, setIsAdmin] = useState<boolean>(false)
   const [loading, setLoading] = useState(true)
 
   const fetchProfile = async (userId: string) => {
@@ -46,6 +49,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const fetchAdminStatus = async () => {
+    try {
+      if (typeof supabase.rpc === 'function') {
+        const { data, error } = await supabase.rpc('is_admin')
+        if (!error && typeof data === 'boolean') {
+          setIsAdmin(data)
+          return
+        }
+      }
+      setIsAdmin(false)
+    } catch {
+      setIsAdmin(false)
+    }
+  }
+
   useEffect(() => {
     let mounted = true
 
@@ -54,10 +72,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = session?.user ?? null
       setUser(currentUser)
       if (currentUser) {
-        await fetchProfile(currentUser.id)
+        await Promise.all([fetchProfile(currentUser.id), fetchAdminStatus()])
       } else {
         setLevel(null)
         setIsActive(false)
+        setIsAdmin(false)
       }
       if (mounted) setLoading(false)
     }).catch(() => {
@@ -70,10 +89,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(currentUser)
       if (currentUser) {
         // Do NOT set loading to true on token refresh or refocus
-        await fetchProfile(currentUser.id)
+        await Promise.all([fetchProfile(currentUser.id), fetchAdminStatus()])
       } else {
         setLevel(null)
         setIsActive(false)
+        setIsAdmin(false)
       }
       if (mounted) setLoading(false)
     })
@@ -86,7 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshProfile = async () => {
     if (user) {
-      await fetchProfile(user.id)
+      await Promise.all([fetchProfile(user.id), fetchAdminStatus()])
     }
   }
 
@@ -95,10 +115,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     setLevel(null)
     setIsActive(false)
+    setIsAdmin(false)
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, level, isActive, refreshProfile, signOut }}>
+    <AuthContext.Provider value={{ user, loading, level, isActive, isAdmin, refreshProfile, signOut }}>
       {children}
     </AuthContext.Provider>
   )
