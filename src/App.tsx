@@ -7,6 +7,7 @@ import { LoginPage } from './pages/LoginPage'
 import { SignupPage } from './pages/SignupPage'
 import { OnboardingPage } from './pages/OnboardingPage'
 import { PayPage } from './pages/PayPage'
+import { PayReturnPage } from './pages/PayReturnPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { ExamPage } from './pages/ExamPage'
 
@@ -32,6 +33,14 @@ export default function App() {
             element={
               <ProtectedRoute requireLevel blockIfActive>
                 <PayPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/pay/return"
+            element={
+              <ProtectedRoute requireLevel>
+                <PayReturnPage />
               </ProtectedRoute>
             }
           />

@@ -355,7 +355,7 @@ describe('NursingPrep Application Tests', () => {
     expect(screen.getByText('Password must be at least 8 characters')).toBeDefined()
   })
 
-  it('renders /pay page with Payment required, disabled Coming soon button, and sign out', async () => {
+  it('renders /pay page with Payment required, enabled Pay now button, and sign out', async () => {
     const mockSession = {
       user: { id: 'test-user-id', email: 'test@example.com' },
     } as unknown as Session
@@ -384,9 +384,9 @@ describe('NursingPrep Application Tests', () => {
     await waitFor(() => {
       expect(screen.getByText('Payment required')).toBeDefined()
     })
-    const payBtn = screen.getByRole('button', { name: /coming soon|pay now/i })
+    const payBtn = screen.getByRole('button', { name: /pay now/i })
     expect(payBtn).toBeDefined()
-    expect(payBtn.hasAttribute('disabled')).toBe(true)
+    expect(payBtn.hasAttribute('disabled')).toBe(false)
     expect(screen.getByRole('button', { name: /sign out/i })).toBeDefined()
   })
 })
