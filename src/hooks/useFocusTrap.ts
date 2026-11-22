@@ -13,6 +13,7 @@ interface UseFocusTrapOptions {
   active: boolean
   onClose?: () => void
   triggerElement?: HTMLElement | null
+  triggerRef?: React.RefObject<HTMLElement | null>
   initialFocusRef?: React.RefObject<HTMLElement | null>
 }
 
@@ -26,10 +27,10 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
   active,
   onClose,
   triggerElement,
+  triggerRef,
   initialFocusRef,
 }: UseFocusTrapOptions) {
   const containerRef = useRef<T | null>(null)
-  const previousActiveElementRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     if (!active) return
@@ -38,8 +39,8 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
     if (!container) return
 
     // Save triggering element to return focus to on close
-    previousActiveElementRef.current =
-      triggerElement || (document.activeElement as HTMLElement | null)
+    const triggerNode =
+      triggerRef?.current || triggerElement || (document.activeElement as HTMLElement | null)
 
     // Mark background siblings under document.body as inert while trap is active
     const elementsToInert: HTMLElement[] = []
@@ -120,14 +121,11 @@ export function useFocusTrap<T extends HTMLElement = HTMLDivElement>({
       }
 
       // Return focus to trigger element
-      if (
-        previousActiveElementRef.current &&
-        typeof previousActiveElementRef.current.focus === 'function'
-      ) {
-        previousActiveElementRef.current.focus()
+      if (triggerNode && typeof triggerNode.focus === 'function') {
+        triggerNode.focus()
       }
     }
-  }, [active, onClose, triggerElement, initialFocusRef])
+  }, [active, onClose, triggerElement, triggerRef, initialFocusRef])
 
   return containerRef
 }
