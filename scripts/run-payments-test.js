@@ -45,8 +45,21 @@ function runTest(testFileName, minMigration) {
 
 if (target === 'exam') {
   runTest('20261121000003_exam_test.sql', '20261121000004');
+} else if (target === 'payments-grants') {
+  runTest('20261121000007_payments_grants_test.sql', '20261121000007');
+  const residueOutput = execSync(
+    `npx supabase db query --remote --yes "select (select count(*)::int from public.payments where reference in ('ref-test-service-role-1', 'illegal-student-insert-ref')) as payments_residue, (select count(*)::int from auth.users where id = '11111111-1111-1111-1111-111111111111') as users_residue;"`,
+    { encoding: 'utf8', stdio: 'pipe' }
+  );
+  console.log('RESIDUE CHECK:', residueOutput);
 } else if (target === 'payments') {
   runTest('20261121000001_payments_test.sql', '20261121000004');
+  runTest('20261121000007_payments_grants_test.sql', '20261121000007');
+  const residueOutput = execSync(
+    `npx supabase db query --remote --yes "select (select count(*)::int from public.payments where reference in ('ref-test-service-role-1', 'illegal-student-insert-ref', 'ref-test-student1-1', 'ref-test-student2-1')) as payments_residue, (select count(*)::int from auth.users where id in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222')) as users_residue;"`,
+    { encoding: 'utf8', stdio: 'pipe' }
+  );
+  console.log('RESIDUE CHECK:', residueOutput);
 } else {
   runTest('20261121000003_exam_test.sql', '20261121000004');
 }
