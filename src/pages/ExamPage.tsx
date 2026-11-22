@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { supabase } from '../lib/supabase'
@@ -82,6 +82,7 @@ export function ExamPage() {
 
   // Exam phase
   const [phase, setPhase] = useState<ExamPhase>('start')
+  const [noQuestionsAvailable, setNoQuestionsAvailable] = useState(false)
   const [isLoading, setIsLoading] = useState(() => Boolean(getStoredAttemptId()))
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
@@ -391,6 +392,11 @@ export function ExamPage() {
     try {
       const { data, error } = await supabase.rpc('get_exam_questions', { p_count: 20 })
       if (error || !data) {
+        if (error?.message?.includes('NO_QUESTIONS_FOR_LEVEL')) {
+          setNoQuestionsAvailable(true)
+          setIsLoading(false)
+          return
+        }
         toast.error(error?.message || 'Failed to load exam questions. Please try again.')
         setIsLoading(false)
         return
@@ -541,6 +547,39 @@ export function ExamPage() {
     setResultsData(null)
     hasSubmittedRef.current = false
     setPhase('start')
+  }
+
+  // -------------------------------------------------------------
+  // NO QUESTIONS AVAILABLE FOR LEVEL SCREEN
+  // -------------------------------------------------------------
+  if (noQuestionsAvailable) {
+    return (
+      <div className="min-h-screen bg-bg text-text flex flex-col justify-center items-center p-6">
+        <div className="w-full max-w-md border border-border bg-surface p-8 rounded-2xl space-y-6 text-center">
+          <div className="space-y-2">
+            <span className="text-xs uppercase font-extrabold tracking-widest text-accent">
+              Examination Notice
+            </span>
+            <h1 className="text-2xl font-extrabold tracking-tight">
+              No questions are available for your level yet
+            </h1>
+            <p className="text-sm text-muted">
+              We are currently preparing examination materials for your academic cohort. Please check back later.
+            </p>
+          </div>
+
+          <div className="pt-2">
+            <Link
+              to="/app"
+              aria-label="Back to dashboard"
+              className="inline-block w-full text-center bg-primary text-on-primary py-3 text-sm font-semibold rounded-xl hover:opacity-95 motion-safe:transition-transform motion-safe:active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              Back to dashboard
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   // -------------------------------------------------------------

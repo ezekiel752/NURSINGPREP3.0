@@ -293,6 +293,28 @@ describe('ExamPage component', () => {
     })
   })
 
+  it('shows friendly "No questions are available for your level yet" screen when NO_QUESTIONS_FOR_LEVEL error occurs', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'NO_QUESTIONS_FOR_LEVEL' },
+    })
+
+    render(
+      <MemoryRouter>
+        <ExamPage />
+      </MemoryRouter>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /start exam/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('No questions are available for your level yet')).toBeDefined()
+      expect(screen.getByRole('link', { name: /back to dashboard/i })).toBeDefined()
+    })
+
+    expect(toast.error).not.toHaveBeenCalledWith('NO_QUESTIONS_FOR_LEVEL')
+  })
+
   it('handles resume_exam rpc error: shows Start screen, clears storage, and shows toast', async () => {
     sessionStorage.setItem('nursingprep_exam_attempt_id', 'err-attempt')
     mockRpc.mockImplementation(async (fnName: string) => {
