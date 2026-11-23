@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { useSessionGuard } from '../hooks/useSessionGuard'
 
 export interface AuthContextType {
   user: User | null
@@ -8,6 +9,7 @@ export interface AuthContextType {
   level: number | null
   isActive: boolean
   isAdmin: boolean
+  isLocked: boolean
   refreshProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -18,6 +20,7 @@ const AuthContext = createContext<AuthContextType>({
   level: null,
   isActive: false,
   isAdmin: false,
+  isLocked: false,
   refreshProfile: async () => {},
   signOut: async () => {},
 })
@@ -27,25 +30,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [level, setLevel] = useState<number | null>(null)
   const [isActive, setIsActive] = useState<boolean>(false)
   const [isAdmin, setIsAdmin] = useState<boolean>(false)
+  const [isLocked, setIsLocked] = useState<boolean>(false)
   const [loading, setLoading] = useState(true)
 
   const fetchProfile = async (userId: string) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('level, is_active')
+        .select('level, is_active, is_locked')
         .eq('id', userId)
         .maybeSingle()
       if (!error && data) {
         setLevel(data.level ?? null)
         setIsActive(Boolean(data.is_active))
+        setIsLocked(Boolean(data.is_locked))
       } else {
         setLevel(null)
         setIsActive(false)
+        setIsLocked(false)
       }
     } catch {
       setLevel(null)
       setIsActive(false)
+      setIsLocked(false)
     }
   }
 
@@ -77,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLevel(null)
         setIsActive(false)
         setIsAdmin(false)
+        setIsLocked(false)
       }
       if (mounted) setLoading(false)
     }).catch(() => {
@@ -94,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLevel(null)
         setIsActive(false)
         setIsAdmin(false)
+        setIsLocked(false)
       }
       if (mounted) setLoading(false)
     })
@@ -111,15 +120,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signOut = async () => {
+    try {
+      if (typeof supabase.rpc === 'function') {
+        await supabase.rpc('end_session')
+      }
+    } catch {
+      // Best effort end_session
+    }
     await supabase.auth.signOut()
     setUser(null)
     setLevel(null)
     setIsActive(false)
     setIsAdmin(false)
+    setIsLocked(false)
   }
 
+  // Active session and device limit guard (exempts admins)
+  useSessionGuard({ user, isAdmin, loading, signOut, setIsLocked })
+
   return (
-    <AuthContext.Provider value={{ user, loading, level, isActive, isAdmin, refreshProfile, signOut }}>
+    <AuthContext.Provider value={{ user, loading, level, isActive, isAdmin, isLocked, refreshProfile, signOut }}>
       {children}
     </AuthContext.Provider>
   )

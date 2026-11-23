@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import { toast } from 'sonner'
 import { supabase } from '../lib/supabase'
 import { useFocusTrap } from '../hooks/useFocusTrap'
+
+export interface StudentLockStatus {
+  is_locked: boolean
+  lock_pending: boolean
+  switches_in_window: number
+  last_events: Array<{ event: string; created_at: string }>
+}
 
 export interface StudentDetailData {
   id: string
@@ -71,6 +79,8 @@ export function StudentDetailDrawer({
   triggerElement,
 }: StudentDetailDrawerProps) {
   const [data, setData] = useState<StudentDetailData | null>(null)
+  const [lockStatus, setLockStatus] = useState<StudentLockStatus | null>(null)
+  const [unlocking, setUnlocking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fetchKey, setFetchKey] = useState(0)
 
@@ -94,14 +104,24 @@ export function StudentDetailDrawer({
 
     const loadDetail = async () => {
       try {
-        const { data: resData, error: rpcError } = await supabase.rpc('admin_student_detail', {
-          p_user_id: studentId,
-        })
+        const [detailRes, lockRes] = await Promise.all([
+          supabase.rpc('admin_student_detail', {
+            p_user_id: studentId,
+          }),
+          supabase.rpc('admin_get_lock_status', {
+            p_user_id: studentId,
+          }),
+        ])
         if (!active) return
-        if (rpcError) {
-          throw new Error(rpcError.message || 'Failed to load student details')
+        if (detailRes.error) {
+          throw new Error(detailRes.error.message || 'Failed to load student details')
         }
-        setData(resData as StudentDetailData)
+        setData(detailRes.data as StudentDetailData)
+        if (lockRes.data) {
+          setLockStatus(lockRes.data as unknown as StudentLockStatus)
+        } else {
+          setLockStatus(null)
+        }
       } catch (err: unknown) {
         if (!active) return
         setError(err instanceof Error ? err.message : 'Failed to load student details')
@@ -122,6 +142,24 @@ export function StudentDetailDrawer({
   const handleRetry = () => {
     setError(null)
     setFetchKey((k) => k + 1)
+  }
+
+  const handleUnlock = async () => {
+    if (!studentId || unlocking) return
+    setUnlocking(true)
+    try {
+      const { error: rpcErr } = await supabase.rpc('admin_unlock_student', {
+        p_user_id: studentId,
+      })
+      if (rpcErr) throw rpcErr
+      toast.success('Account unlocked')
+      setFetchKey((k) => k + 1)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to unlock account'
+      toast.error(msg)
+    } finally {
+      setUnlocking(false)
+    }
   }
 
   // Render modal drawer directly into document.body portal so siblings can be marked inert
@@ -260,7 +298,50 @@ export function StudentDetailDrawer({
                     </div>
                   </section>
 
-                  {/* Section 2: Study Progress Stats */}
+                  {/* Section 2: Device & Session Security */}
+                  <section className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs uppercase font-extrabold tracking-wider text-muted">
+                        Device & Session Security
+                      </h3>
+                      {lockStatus?.is_locked && (
+                        <button
+                          type="button"
+                          onClick={handleUnlock}
+                          disabled={unlocking}
+                          className="px-3 py-1 text-xs font-semibold rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50"
+                        >
+                          {unlocking ? 'Unlocking...' : 'Unlock Account'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="border border-border rounded-xl divide-y divide-border bg-surface/50">
+                      <div className="px-4 py-2.5 flex justify-between items-center gap-4">
+                        <span className="text-muted text-xs font-medium">Account Status</span>
+                        {lockStatus?.is_locked ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-danger/15 text-danger border border-danger/30">
+                            Account Locked
+                          </span>
+                        ) : lockStatus?.lock_pending ? (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                            Lock Pending
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                            Normal
+                          </span>
+                        )}
+                      </div>
+                      <div className="px-4 py-2.5 flex justify-between gap-4">
+                        <span className="text-muted text-xs font-medium">Device Switches</span>
+                        <span className="text-text text-right font-medium">
+                          {lockStatus ? `${lockStatus.switches_in_window} / 3 in last 30 days` : '0 / 3 in last 30 days'}
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Section 3: Study Progress Stats */}
                   <section className="space-y-3">
                     <h3 className="text-xs uppercase font-extrabold tracking-wider text-muted">
                       Study Progress
